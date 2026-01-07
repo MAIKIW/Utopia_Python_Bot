@@ -38,9 +38,9 @@ NEAR_POINT = 100
 AUTO_REPORT_TIME = "23:59"
 
 # ================= ⚠️ ใส่รหัสของคุณตรงนี้ ⚠️ =================
-NEWS_API_KEY      = "ใส่_API_KEY_ข่าว"
-TELEGRAM_TOKEN    = "ใส่_TOKEN"
-TELEGRAM_CHAT_ID  = "ใส่_CHAT_ID"
+NEWS_API_KEY      = "fea0e08efe934cf9a3affdfd52f2084a"
+TELEGRAM_TOKEN    = "8268781368:AAEf7PFO84pX4G_5b6h_xasHe-MBu2zCLWU"
+TELEGRAM_CHAT_ID  = "-1003531261082"
 
 NEWS_INTERVAL = 3600
 HIGH_IMPACT_KEYWORDS = ["NFP", "NON-FARM", "PAYROLL", "CPI", "FOMC", "INTEREST RATE", "INFLATION", "FED DECISION"]
@@ -155,7 +155,7 @@ def deep_news_analysis():
 def get_daily_report():
     now = datetime.now(); start = datetime(now.year, now.month, now.day, 0,0)
     history = mt5.history_deals_get(start, now, group=SYMBOL)
-    if not history: return "😴 <b>สรุปยอดวันนี้</b>\nยังไม่มีการเทรดครับ"
+    if not history: return "😴 <b>สรุปยอดวันนี้</b>\nยังไม่มีการเทรด"
     
     net=0.0; g_win=0.0; g_loss=0.0; win=0; loss=0; pts_plus=0; pts_minus=0
     for d in history:
@@ -174,7 +174,7 @@ def get_daily_report():
     wr = (win/total*100) if total>0 else 0
     pf = (g_win/g_loss) if g_loss>0 else 99.99
     
-    return (f"📊 <b>รายงานผลประกอบการ (V14)</b>\n"
+    return (f"📊 <b>รายงานผลประจำวัน</b>\n"
             f"📅 <i>{now.strftime('%d/%m/%Y')}</i>\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"💰 <b>กำไรสุทธิ:</b> ${net:,.2f} {'🤑' if net>=0 else '🩸'}\n"
@@ -224,9 +224,23 @@ def execute_trade(side, lot, reason, is_grid=False):
     price = t.ask if side == "BUY" else t.bid
     req = {"action": mt5.TRADE_ACTION_DEAL, "symbol": SYMBOL, "volume": float(lot), "type": mt5.ORDER_TYPE_BUY if side=="BUY" else mt5.ORDER_TYPE_SELL, "price": price, "magic": MAGIC, "deviation": 20, "comment": reason}
     res = mt5.order_send(req)
+    
     if res.retcode == mt5.TRADE_RETCODE_DONE and not is_grid: 
-        tg_send(f"✅ <b>เปิดออเดอร์ {side}</b> @ {price:.2f}\nเหตุผล: {reason}")
-        if side == "BUY": tg_send_photo(generate_chart()) # Auto-Chart
+        # --- คำนวณ TP/SL เพื่อโชว์ในรายงาน (Display Only) ---
+        pt = mt5.symbol_info(SYMBOL).point
+        if side == "BUY":
+            tp1 = price + 500 * pt
+            tp2 = price + 1000 * pt
+            sl  = price - 800 * pt
+        else:
+            tp1 = price - 500 * pt
+            tp2 = price - 1000 * pt
+            sl  = price + 800 * pt
+            
+        tg_send(f"✅ <b>บอทเปิดออเดอร์ {side} แล้ว!</b> @ {price:.2f}\n🎯 เป้า 1: {tp1:.2f}\n🎯 เป้า 2: {tp2:.2f}\n🛑 ยอมแพ้: {sl:.2f}\nเหตุผล: {reason}")
+        
+        if side == "BUY": tg_send_photo(generate_chart()) # ส่งกราฟให้ดูเฉพาะขา Buy
+        
     return res
 
 def send_signal_only(side, price, detail):
@@ -235,12 +249,12 @@ def send_signal_only(side, price, detail):
     tp1, tp2, sl = (price + 500*pt, price + 1000*pt, price - 800*pt) if side=="BUY" else (price - 500*pt, price - 1000*pt, price + 800*pt)
     current_signal = {'side': side, 'tp1': tp1, 'tp2': tp2, 'sl': sl, 'alerted': []}
     icon = "🔵" if side == "BUY" else "🟠"
-    tg_send(f"{icon} <b>สัญญาณ {side} มาแล้ว!</b> @ {price:.2f}\n🎯 เป้าแรก: {tp1:.2f} | 🛑 ยอมแพ้: {sl:.2f}\n{detail}")
+    tg_send(f"{icon} <b>สัญญาณ {side} มาแล้ว!</b> @ {price:.2f}\n🎯 เป้า 1: {tp1:.2f}\n🎯 เป้า 2: {tp2:.2f}\n🛑 ยอมแพ้: {sl:.2f}\n{detail}")
     tg_send_photo(generate_chart())
 
 # ================= 5. ลูปทำงานหลัก (MAIN LOOP) =================
 if not mt5.initialize(): quit()
-log("🚀 ระบบ V14 (Thai Dashboard) เริ่มทำงานแล้ว...")
+log("🚀 ระบบ UTOPIA HYBRID BOT เริ่มทำงานแล้ว")
 
 try:
     while True:
@@ -264,11 +278,18 @@ try:
                     if "message" in u and "text" in u["message"]:
                         cmd = u["message"]["text"].lower()
                         if cmd == "/chart": 
-                            tg_send("📸 กำลังถ่ายภาพกราฟ...")
+                            tg_send("📸 กำลังโหลดกราฟ...")
                             img = generate_chart(); tg_send_photo(img) if img else tg_send("❌ สร้างกราฟไม่สำเร็จ")
                         elif cmd.startswith("/setlot"):
-                            try: BASE_LOT = float(cmd.split()[1]); tg_send(f"✅ ปรับขนาดกระสุนเป็น: {BASE_LOT} Lot")
+                            try: BASE_LOT = float(cmd.split()[1]); tg_send(f"✅ ปรับขนาดล็อตเป็น: {BASE_LOT} Lot")
                             except: pass
+
+                        elif cmd.startswith("/setnews"):
+                            try:
+                                new_key = cmd.split()[1]
+                                NEWS_API_KEY = new_key
+                                tg_send(f"✅ บันทึก News Key แล้ว!\nKey: {new_key[:5]}...")
+                            except: tg_send("❌ พิมพ์ผิด! ตัวอย่าง: /setnews xxxxxxxx")
                         elif cmd == "/be": c=set_breakeven(); tg_send(f"🛡️ ตั้งบังทุนสำเร็จ: {c} ไม้")
                         elif cmd == "/status":
                             trend = "ขาขึ้น 🟢" if market_context['trend_h1']==1 else "ขาลง 🔴"
@@ -343,3 +364,4 @@ try:
 
 except KeyboardInterrupt: pass
 finally: mt5.shutdown()
+
