@@ -107,6 +107,12 @@ NEWS_API_KEY      = "fea0e08efe934cf9a3affdfd52f2084a"
 TELEGRAM_TOKEN    = "8268781368:AAEf7PFO84pX4G_5b6h_xasHe-MBu2zCLWU"
 TELEGRAM_CHAT_ID  = "-1003531261082"
 
+# --- ระบบบริหารกำไรแบบ Dynamic ---
+last_capital = 0.0             # ยอดทุนเริ่มต้น (ดึงอัตโนมัติเมื่อเริ่มรัน)
+WITHDRAW_PERCENT = 50.0        # เปอร์เซ็นต์กำไรที่แนะนำให้ถอน
+MIN_PROFIT_TO_ADVISE = 10.0    # กำไรขั้นต่ำที่จะเริ่มแจ้งเตือน
+has_notified_withdraw = False  # สถานะการแจ้งเตือน
+
 NEWS_INTERVAL = 3600
 HIGH_IMPACT_KEYWORDS = ["NFP", "NON-FARM", "PAYROLL", "CPI", "FOMC", "INTEREST RATE", "INFLATION", "FED DECISION"]
 
@@ -250,23 +256,55 @@ def get_daily_report():
             f"🔢 <b>จำนวนเทรด:</b> {total} (✅{win} / ❌{loss})")
 
 # --- D. ติดตามสัญญาณ (V12 Logic) ---
+# --- D. ติดตามสัญญาณ (V14 Tuned Logic) ---
 def monitor_active_signal():
     global current_signal
     if not current_signal: return
     try:
         tick = mt5.symbol_info_tick(SYMBOL)
-        curr = tick.bid if current_signal['side'] == "BUY" else tick.ask
+        tick_price = tick.bid if current_signal['side'] == "BUY" else tick.ask
         s = current_signal
+        side = s['side']
         
-        hit_sl = (s['side']=="BUY" and curr<=s['sl']) or (s['side']=="SELL" and curr>=s['sl'])
-        hit_tp2 = (s['side']=="BUY" and curr>=s['tp2']) or (s['side']=="SELL" and curr<=s['tp2'])
-        
-        if hit_sl: tg_send(f"😭 <b>ตัดขาดทุน (SL)</b> @ {curr:.2f}"); current_signal=None; return
-        if hit_tp2: tg_send(f"🏆 <b>ทำกำไรสูงสุด (TP2)</b> @ {curr:.2f}"); current_signal=None; return
+        # --- ดึงค่า ATR มาใช้คำนวณจุดแจ้งเตือน ---
+        pt = mt5.symbol_info(SYMBOL).point
+        atr_price = market_context.get('atr_points', 0) * pt
 
-        if ((s['side']=="BUY" and curr>=s['tp1']) or (s['side']=="SELL" and curr<=s['tp1'])) and 'TP1' not in s['alerted']:
-            tg_send(f"🎯 <b>เก็บกำไรไม้แรก (TP1)</b> @ {curr:.2f}"); s['alerted'].append('TP1')
-    except: pass
+        # === ระบบ AUTO/SEMI EXECUTION ALERT (Logic Add-on) ===
+        if side == "BUY":
+            # เช็ค TP1 (1.0 * ATR)
+            if tick_price >= s['tp1'] and 'TP1' not in s['alerted']:
+                tg_send(f"🎯 <b>AUTO TP1 HIT</b>\nBUY {SYMBOL}\nPrice: {tick_price:.2f}")
+                s['alerted'].append('TP1')
+            
+            # เช็ค TP2 (2.0 * ATR)
+            if tick_price >= s['tp2']:
+                tg_send(f"🎯 <b>AUTO TP2 HIT</b>\nBUY {SYMBOL}\nPrice: {tick_price:.2f}")
+                current_signal = None; return
+                
+            # เช็ค SL (1.5 * ATR)
+            if tick_price <= s['sl']:
+                tg_send(f"🛑 <b>AUTO SL HIT</b>\nBUY {SYMBOL}\nPrice: {tick_price:.2f}")
+                current_signal = None; return
+
+        else: # ขา SELL
+            # เช็ค TP1 (1.0 * ATR)
+            if tick_price <= s['tp1'] and 'TP1' not in s['alerted']:
+                tg_send(f"🎯 <b>AUTO TP1 HIT</b>\nSELL {SYMBOL}\nPrice: {tick_price:.2f}")
+                s['alerted'].append('TP1')
+                
+            # เช็ค TP2 (2.0 * ATR)
+            if tick_price <= s['tp2']:
+                tg_send(f"🎯 <b>AUTO TP2 HIT</b>\nSELL {SYMBOL}\nPrice: {tick_price:.2f}")
+                current_signal = None; return
+                
+            # เช็ค SL (1.5 * ATR)
+            if tick_price >= s['sl']:
+                tg_send(f"🛑 <b>AUTO SL HIT</b>\nSELL {SYMBOL}\nPrice: {tick_price:.2f}")
+                current_signal = None; return
+                
+    except Exception as e:
+        log(f"Monitor Signal Error: {e}")
 
 # ================= 4. การส่งคำสั่ง (EXECUTION) =================
 def close_all_positions():
@@ -310,11 +348,36 @@ def execute_trade(side, lot, reason, is_grid=False):
 
 def send_signal_only(side, price, detail):
     global current_signal
+    # --- คำนวณ ATR ในหน่วยราคา (Price) สำหรับใช้ใน ADD-ON Logic ---
     pt = mt5.symbol_info(SYMBOL).point
-    tp1, tp2, sl = (price + 500*pt, price + 1000*pt, price - 800*pt) if side=="BUY" else (price - 500*pt, price - 1000*pt, price + 800*pt)
+    atr_price = market_context.get('atr_points', 0) * pt
+    
+    # === ใช้ Logic จาก send_semi_signal_addon ===
+    if side == "BUY":
+        tp1 = price + (atr_price * 1.0)
+        tp2 = price + (atr_price * 2.0)
+        sl  = price - (atr_price * 1.5)
+    else:
+        tp1 = price - (atr_price * 1.0)
+        tp2 = price - (atr_price * 2.0)
+        sl  = price + (atr_price * 1.5)
+        
     current_signal = {'side': side, 'tp1': tp1, 'tp2': tp2, 'sl': sl, 'alerted': []}
-    icon = "🔵" if side == "BUY" else "🟠"
-    tg_send(f"{icon} <b>สัญญาณ {side} มาแล้ว!</b> @ {price:.2f}\n🎯 เป้า 1: {tp1:.2f}\n🎯 เป้า 2: {tp2:.2f}\n🛑 ยอมแพ้: {sl:.2f}\n{detail}")
+    
+    # --- ปรับรูปแบบข้อความเป็น SEMI TRADE PLAN ---
+    msg = (
+        "📣 <b>SEMI TRADE PLAN</b>\n"
+        "━━━━━━━━━━━━━━\n"
+        f"{'🟢 BUY' if side=='BUY' else '🔴 SELL'} {SYMBOL}\n"
+        f"📍 Entry: {price:.2f}\n\n"
+        f"🎯 TP1: {tp1:.2f}\n"
+        f"🎯 TP2: {tp2:.2f}\n"
+        f"🛑 SL: {sl:.2f}\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"💡 {detail}"
+    )
+    
+    tg_send(msg)
     tg_send_photo(generate_chart())
 
 # ================= 5. ลูปทำงานหลัก (MAIN LOOP) =================
@@ -328,11 +391,37 @@ try:
             market_context = analyze_market_structure()
         except: pass
 
+        # --- ระบบคำนวณถอนกำไรแบบ Dynamic ---
+        try:
+            acc = mt5.account_info()
+            if acc is not None:
+                if last_capital == 0: last_capital = acc.balance
+                total_profit = acc.balance - last_capital
+                
+                if total_profit >= MIN_PROFIT_TO_ADVISE and not has_notified_withdraw:
+                    withdraw_amount = total_profit * (WITHDRAW_PERCENT / 100)
+                    remain_in_port = acc.balance - withdraw_amount
+                    msg = (
+                        "💰 <b>แจ้งเตือนบริหารกำไร (Dynamic)</b>\n"
+                        f"📈 กำไรสะสม: <b>${total_profit:,.2f}</b>\n"
+                        f"💸 <b>ควรพิจารณาถอน: ${withdraw_amount:,.2f}</b>\n"
+                        f"🛡️ ทุนคงเหลือ: ${remain_in_port:,.2f}\n"
+                        "💡 กด <code>/resetcapital</code> หลังถอนเสร็จ"
+                    )
+                    tg_send(msg)
+                    has_notified_withdraw = True
+            
+            if datetime.now().strftime("%H:%M") == "00:00": has_notified_withdraw = False
+        except: pass
+
+        # --- 2. ส่งรายงานอัตโนมัติ --- (ของเดิมที่มีอยู่แล้ว)
+        
         # --- 2. ส่งรายงานอัตโนมัติ ---
         now = datetime.now()
         if now.strftime("%H:%M") == AUTO_REPORT_TIME and last_summary_date != now.date():
             tg_send(get_daily_report()); last_summary_date = now.date()
 
+        # --- 3. คำสั่ง Telegram ---
         # --- 3. คำสั่ง Telegram ---
         if "ใส่" not in TELEGRAM_TOKEN:
             try:
@@ -372,20 +461,48 @@ try:
                             except: tg_send("❌ พิมพ์ผิด! ตัวอย่าง: /setnews xxxxxxxx")
                             
                         elif cmd == "/be": c=set_breakeven(); tg_send(f"🛡️ ตั้งบังทุนสำเร็จ: {c} ไม้")
+
+                        elif cmd == "/resetcapital":
+                            acc = mt5.account_info()
+                            if acc:
+                                last_capital = acc.balance
+                                has_notified_withdraw = False 
+                                tg_send(f"🔄 <b>รีเซ็ตทุนเริ่มต้นสำเร็จ!</b>\n💰 ทุนใหม่ตั้งต้นที่: ${last_capital:,.2f}")
+                            else:
+                                tg_send("❌ ไม่สามารถดึงข้อมูลบัญชีได้")
                         
                         elif cmd == "/status":
-                            trend = "ขาขึ้น 🟢" if market_context['trend_h1']==1 else "ขาลง 🔴"
-                            atr = max(MIN_GRID_DIST, market_context['atr_points']*ATR_MULTIPLIER)
-                            news = "⛔ ติดข่าว (ห้ามเทรด)" if news_blocked else "✅ ปกติ"
-                            tg_send(f"📊 <b>สถานะระบบปัจจุบัน</b>\n━━━━━━━━━━━━\n🕹️ <b>โหมด:</b> {MODE} | 📰 <b>ข่าว:</b> {news}\n🌊 <b>เทรนด์ใหญ่ H1:</b> {trend}\n📏 <b>ระยะแก้ไม้ ATR:</b> {atr:.0f} จุด\n🧱 <b>แนวรับ/ต้าน:</b> {market_context['support']:.1f} / {market_context['resistance']:.1f}")
+                            # === ส่วนที่ปรับปรุงใหม่ (Status Addon) ===
+                            acc = mt5.account_info()
+                            pos = mt5.positions_get(symbol=SYMBOL, magic=MAGIC)
+                            trend = market_context.get("trend_h1", "N/A")
+                            atr = market_context.get("atr_points", 0)
+                            
+                            dd = 0
+                            if acc and acc.balance > 0:
+                                dd = (acc.balance - acc.equity) / acc.balance * 100
+                            
+                            msg = (
+                                "📊 UTOPIA STATUS\n"
+                                "━━━━━━━━━━━━━━\n"
+                                f"🕹️ Mode: {MODE}\n"
+                                f"📈 Trend H1: {'BUY 🟢' if trend == 1 else 'SELL 🔴'}\n"
+                                f"📏 ATR: {atr:.0f} pts\n\n"
+                                f"💰 Balance: ${acc.balance:,.2f}\n"
+                                f"📊 Equity:  ${acc.equity:,.2f}\n"
+                                f"📉 Drawdown: {dd:.2f}%\n"
+                                f"🧮 Positions: {len(pos) if pos else 0}"
+                            )
+                            tg_send(msg)
+                            # ========================================
                         
                         elif cmd == "/report": tg_send(get_daily_report())
                         elif cmd == "/auto": MODE="AUTO"; tg_send("🤖 เปลี่ยนเป็นโหมด: AUTO")
                         elif cmd == "/semi": MODE="SEMI"; tg_send("🖐️ เปลี่ยนเป็นโหมด: SEMI")
                         elif cmd == "/closeall": close_all_positions(); tg_send("⛔ ปิดรวบทุกไม้แล้ว")
                         # ====================================================
-            except: pass
-
+            except Exception as e:
+                log(f"Telegram Error: {e}")
         if MODE == "SEMI": monitor_active_signal()
 
         # --- 4. Logic Loop ---
@@ -406,7 +523,7 @@ try:
                     if dist >= grid_dist: 
                         execute_trade("BUY" if last.type==0 else "SELL", last.volume, f"แก้ไม้ (ATR {grid_dist:.0f})", is_grid=True)
             
-            # B. หาจังหวะเข้าใหม่ (New Signal)
+           # B. ระบบโหวตหาจังหวะเข้าใหม่ (Scoring Vote System)
             else:
                 deep_news_analysis() # เช็คข่าว
                 if not news_blocked:
@@ -414,34 +531,32 @@ try:
                     if (tick.ask - tick.bid)/mt5.symbol_info(SYMBOL).point <= MAX_SPREAD:
                         r = mt5.copy_rates_from_pos(SYMBOL, TF_TRADE, 0, 300)
                         df = pd.DataFrame(r)
-                        df.ta.ema(50, append=True); df.ta.ema(200, append=True)
+                        df.ta.ema(20, append=True); df.ta.ema(50, append=True)
                         df.ta.rsi(14, append=True); df.ta.bbands(20, append=True)
+                        
                         try:
-                            # Basic Signal
-                            c_ema50 = [c for c in df.columns if c.startswith('EMA_50')][0]
-                            c_ema200 = [c for c in df.columns if c.startswith('EMA_200')][0]
                             c_rsi = [c for c in df.columns if c.startswith('RSI')][0]
                             c_bbl = [c for c in df.columns if c.startswith('BBL')][0]
                             c_bbu = [c for c in df.columns if c.startswith('BBU')][0]
-
-                            sig = 0
-                            if df['close'].iloc[-1] < df[c_bbl].iloc[-1] and df[c_rsi].iloc[-1] < 30: sig = 1
-                            elif df['close'].iloc[-1] > df[c_bbu].iloc[-1] and df[c_rsi].iloc[-1] > 70: sig = -1
+                            c_ema20 = [c for c in df.columns if c.startswith('EMA_20')][0]
                             
-                            # Filters (MTF + SR)
-                            if sig == 1 and market_context['trend_h1'] == -1: sig = 0
-                            if sig == -1 and market_context['trend_h1'] == 1: sig = 0
-                            
-                            pt = mt5.symbol_info(SYMBOL).point
-                            if sig == 1 and (market_context['resistance'] - tick.ask)/pt < SR_BUFFER: sig = 0
-                            if sig == -1 and (tick.bid - market_context['support'])/pt < SR_BUFFER: sig = 0
+                            score = 0; side = ""; pt = mt5.symbol_info(SYMBOL).point
+                            curr_close = df['close'].iloc[-1]; curr_rsi = df[c_rsi].iloc[-1]
 
-                            if sig != 0:
-                                side = "BUY" if sig > 0 else "SELL"
-                                detail = f"คอนเฟิร์มเทรนด์ H1 | ระยะแก้ไม้: {market_context['atr_points']*ATR_MULTIPLIER:.0f} จุด"
+                            # 🗳️ เริ่มการโหวตคะแนน
+                            if curr_close < df[c_bbl].iloc[-1] and curr_rsi < 30: score += 2; side = "BUY"
+                            elif curr_close > df[c_bbu].iloc[-1] and curr_rsi > 70: score += 2; side = "SELL"
+
+                            if score >= 2:
+                                if (side == "BUY" and market_context.get('trend_h1') == 1) or (side == "SELL" and market_context.get('trend_h1') == -1): score += 1
+                                if (abs(curr_close - df[c_ema20].iloc[-1]) / pt) > 400: score += 1
+                                if (side == "BUY" and (market_context['resistance'] - tick.ask)/pt >= SR_BUFFER) or (side == "SELL" and (tick.bid - market_context['support'])/pt >= SR_BUFFER): score += 1
+
+                            if score >= 4:
+                                detail = f"มั่นใจ: {(score/5)*100}% | โหวต: {score}/5"
                                 if MODE == "AUTO": execute_trade(side, BASE_LOT, detail)
                                 else: 
-                                    send_signal_only(side, tick.ask if sig>0 else tick.bid, detail)
+                                    send_signal_only(side, tick.ask if side=="BUY" else tick.bid, detail)
                                     next_trade_time = time.time() + SIGNAL_PAUSE_SEC
                         except: pass
         time.sleep(1)
@@ -536,4 +651,5 @@ def telegram_command_addon(cmd):
 
 # ==================================================
 # END ADD-ON
+
 # ==================================================
