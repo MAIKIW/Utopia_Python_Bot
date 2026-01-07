@@ -1,5 +1,6 @@
 # ==================================================================
-#         UTOPIA HYBRID PRO - GUARDIAN EDITION (V10.1 COMPLETE)
+#    UTOPIA HYBRID PRO - GUARDIAN EDITION (V12 OMNI-TOOL)
+#    Base: V10.1 (Pro Report) + Addons: Chart, SetLot, Breakeven
 # ==================================================================
 import MetaTrader5 as mt5
 import pandas as pd
@@ -7,6 +8,8 @@ import pandas_ta as ta
 import requests
 import time
 import nltk
+import io
+import matplotlib.pyplot as plt # ต้องลง pip install matplotlib ก่อน
 from datetime import datetime
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
@@ -44,7 +47,7 @@ last_update_id = 0
 current_signal = None 
 last_summary_date = None
 
-# ================= 2. UTILS =================
+# ================= 2. UTILS & GRAPHICS =================
 def log(msg): print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
 def tg_send(msg):
@@ -53,6 +56,67 @@ def tg_send(msg):
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=3)
     except: pass
+
+# ฟังก์ชันส่งรูป (จาก V11)
+def tg_send_photo(photo_file):
+    if "ใส่" in TELEGRAM_TOKEN: return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+        files = {'photo': photo_file}
+        data = {'chat_id': TELEGRAM_CHAT_ID}
+        requests.post(url, data=data, files=files, timeout=10)
+    except Exception as e: log(f"Send Photo Error: {e}")
+
+# ฟังก์ชันวาดกราฟ (จาก V11)
+def generate_chart():
+    try:
+        rates = mt5.copy_rates_from_pos(SYMBOL, TF, 0, 100)
+        df = pd.DataFrame(rates)
+        df['time'] = pd.to_datetime(df['time'], unit='s')
+        
+        df.ta.ema(length=50, append=True)
+        df.ta.ema(length=200, append=True)
+        df.ta.bbands(length=20, append=True)
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(df['time'], df['close'], label='Price', color='black', linewidth=1)
+        
+        cols = df.columns
+        try:
+            c_ema50 = [c for c in cols if c.startswith('EMA_50')][0]
+            c_ema200 = [c for c in cols if c.startswith('EMA_200')][0]
+            c_bbu = [c for c in cols if c.startswith('BBU')][0]
+            c_bbl = [c for c in cols if c.startswith('BBL')][0]
+            
+            plt.plot(df['time'], df[c_ema50], label='EMA 50', color='orange', alpha=0.7)
+            plt.plot(df['time'], df[c_ema200], label='EMA 200', color='blue', alpha=0.7)
+            plt.plot(df['time'], df[c_bbu], color='green', linestyle='--', alpha=0.3)
+            plt.plot(df['time'], df[c_bbl], color='red', linestyle='--', alpha=0.3)
+        except: pass
+
+        plt.title(f"{SYMBOL} Analysis (Last 100 Candles)")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+        return buf
+    except Exception as e:
+        log(f"Chart Error: {e}"); return None
+
+# ฟังก์ชันตั้งบังทุน (จาก V11)
+def set_breakeven():
+    pos = mt5.positions_get(symbol=SYMBOL, magic=MAGIC)
+    if not pos: return 0
+    count = 0
+    for p in pos:
+        if p.profit > 0 and abs(p.sl - p.price_open) > 0.01:
+            req = {"action": mt5.TRADE_ACTION_SLTP, "position": p.ticket, "sl": p.price_open, "tp": p.tp}
+            res = mt5.order_send(req)
+            if res.retcode == mt5.TRADE_RETCODE_DONE: count += 1
+    return count
 
 def close_all_positions():
     pos = mt5.positions_get(symbol=SYMBOL, magic=MAGIC)
@@ -64,7 +128,7 @@ def close_all_positions():
         count += 1
     return count
 
-# ================= 3. PRO REPORT (V10) =================
+# ================= 3. PRO REPORT (V10.1 Original) =================
 def get_daily_report():
     now = datetime.now()
     today_start = datetime(now.year, now.month, now.day, 0, 0, 0)
@@ -112,7 +176,7 @@ def get_daily_report():
            f"🔢 <b>Trades:</b> {total_trades} (✅{win_count} / ❌{loss_count})")
     return msg
 
-# ================= 4. SIGNAL TRACKER (V9) =================
+# ================= 4. SIGNAL TRACKER (V10.1 Original) =================
 def monitor_active_signal():
     global current_signal
     if not current_signal: return
@@ -167,7 +231,7 @@ def execute_trade(side, lot, reason, is_grid=False):
     price = t.ask if side == "BUY" else t.bid
     req = {"action": mt5.TRADE_ACTION_DEAL, "symbol": SYMBOL, "volume": float(lot), "type": mt5.ORDER_TYPE_BUY if side=="BUY" else mt5.ORDER_TYPE_SELL, "price": price, "magic": MAGIC, "deviation": 20, "comment": reason, "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC}
     res = mt5.order_send(req)
-    if res.retcode == mt5.TRADE_RETCODE_DONE and not is_grid: tg_send(f"✅ <b>{side}</b> @ {price:.2f}\nเหตุผล: {reason}")
+    if res.retcode == mt5.TRADE_RETCODE_DONE and not is_grid: tg_send(f"✅ <b>{side}</b> @ {price:.2f} (Lot: {lot})")
     return res
 
 def send_signal_only(side, price, detail):
@@ -177,10 +241,14 @@ def send_signal_only(side, price, detail):
     current_signal = {'side': side, 'tp1': tp1, 'tp2': tp2, 'sl': sl, 'alerted': []}
     icon = "🔵" if side=="BUY" else "🟠"
     tg_send(f"{icon} <b>Signal {side}</b> @ {price:.2f}\n🎯 TP1: {tp1:.2f} | TP2: {tp2:.2f}\n🛑 SL: {sl:.2f}\n{detail}")
+    
+    # [V12] ส่งกราฟอัตโนมัติเมื่อมีสัญญาณ (ตามฟีเจอร์ Vision)
+    chart_img = generate_chart()
+    if chart_img: tg_send_photo(chart_img)
 
 # ================= 7. MAIN LOOP =================
 if not mt5.initialize(): quit()
-log("🚀 SYSTEM V10.1 (FULL COMPLETE) STARTED")
+log("🚀 SYSTEM V12 (OMNI-TOOL) STARTED")
 
 try:
     while True:
@@ -197,18 +265,35 @@ try:
                     if "message" in u and "text" in u["message"]:
                         cmd = u["message"]["text"].lower()
                         
-                        # --- นี่คือส่วนที่ผมแก้คืนให้ครับ (แบบละเอียด) ---
-                        if cmd == "/status": 
+                        # --- [V12] Added Commands ---
+                        if cmd == "/chart": 
+                            tg_send("📸 กำลังถ่ายภาพกราฟ...")
+                            img = generate_chart()
+                            if img: tg_send_photo(img)
+                            else: tg_send("❌ สร้างกราฟล้มเหลว")
+                        
+                        elif cmd.startswith("/setlot"):
+                            try:
+                                new_lot = float(cmd.split()[1])
+                                BASE_LOT = new_lot
+                                tg_send(f"✅ ปรับขนาดกระสุนเรียบร้อย: {BASE_LOT} Lot")
+                            except: tg_send("❌ พิมพ์ผิด! ตัวอย่าง: /setlot 0.05")
+
+                        elif cmd == "/be":
+                            c = set_breakeven()
+                            tg_send(f"🛡️ ตั้งบังทุน (Breakeven) แล้ว: {c} ไม้")
+
+                        # --- V10.1 Original Commands ---
+                        elif cmd == "/status": 
                             wait_time = max(0, int(next_trade_time - time.time()))
                             st_msg = f"พักอีก {wait_time} วินาที" if wait_time > 0 else "พร้อมเทรด ✅"
                             track_msg = f"กำลังตาม {current_signal['side']}" if current_signal else "ไม่มีสัญญาณ"
                             news_msg = "⛔ ติดข่าว (Block)" if news_blocked else "✅ ข่าวปกติ"
-                            
-                            tg_send(f"📊 <b>สถานะระบบปัจจุบัน</b>\n━━━━━━━━━━━━\n🕹️ <b>โหมด:</b> {MODE}\n⏳ <b>ระบบ:</b> {st_msg}\n📡 <b>สัญญาณ:</b> {track_msg}\n📰 <b>ข่าว:</b> {news_msg}")
+                            tg_send(f"📊 <b>สถานะระบบ</b> (Lot: {BASE_LOT})\n━━━━━━━━━━━━\n🕹️ <b>โหมด:</b> {MODE}\n⏳ <b>ระบบ:</b> {st_msg}\n📡 <b>สัญญาณ:</b> {track_msg}\n📰 <b>ข่าว:</b> {news_msg}")
                         
                         elif cmd == "/report": tg_send(get_daily_report())
-                        elif cmd == "/auto": MODE="AUTO"; tg_send("🤖 เปลี่ยนโหมด: AUTO")
-                        elif cmd == "/semi": MODE="SEMI"; tg_send("🖐️ เปลี่ยนโหมด: SEMI")
+                        elif cmd == "/auto": MODE="AUTO"; tg_send("🤖 AUTO")
+                        elif cmd == "/semi": MODE="SEMI"; tg_send("🖐️ SEMI")
                         elif cmd == "/buy": execute_trade("BUY", BASE_LOT, "Manual")
                         elif cmd == "/sell": execute_trade("SELL", BASE_LOT, "Manual")
                         elif cmd == "/closeall": c=close_all_positions(); tg_send(f"⛔ ปิดรวบยอด: {c} ไม้")
@@ -237,7 +322,7 @@ try:
                 if not news_blocked:
                     tick = mt5.symbol_info_tick(SYMBOL)
                     if (tick.ask - tick.bid)/mt5.symbol_info(SYMBOL).point <= MAX_SPREAD:
-                        r = mt5.copy_rates_from_pos(SYMBOL, TF, 0, 300)
+                        r = mt5.copy_rates_from_pos(SYMBOL, TF, 0, 100) # [V12] Fetch 100 for Chart capability
                         df = pd.DataFrame(r)
                         df.ta.ema(50, append=True); df.ta.ema(200, append=True)
                         df.ta.rsi(14, append=True); df.ta.bbands(20, append=True)
