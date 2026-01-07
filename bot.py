@@ -13,6 +13,58 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
+# ==========================================
+# 2. ส่วนระบบจัดการ Token (/settoken)
+# ==========================================
+CONFIG_FILE = "config.json" # ชื่อไฟล์ที่จะใช้เก็บ Token
+
+def save_token(token):
+    """ฟังก์ชันบันทึก Token ลงไฟล์"""
+    data = {"user_token": token}
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4)
+    print(f"✅ บันทึก Token เรียบร้อยแล้ว! (บันทึกลง {CONFIG_FILE})")
+
+def load_token():
+    """ฟังก์ชันอ่าน Token จากไฟล์"""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get("user_token")
+        except:
+            return None
+    return None
+
+# --- ตรวจสอบคำสั่ง /settoken จาก Arguments ---
+# วิธีใช้: python bot.py /settoken YOUR_API_KEY_HERE
+if len(sys.argv) > 2 and sys.argv[1] == "/settoken":
+    new_token = sys.argv[2]
+    save_token(new_token)
+    print("กรุณารันโปรแกรมใหม่อีกครั้งเพื่อเริ่มทำงาน")
+    sys.exit()
+
+# --- โหลด Token มาใช้งาน ---
+my_token = load_token()
+
+# ถ้ายังไม่มี Token ให้ถาม user
+if not my_token:
+    print("⚠️ ยังไม่พบ Token ในระบบ")
+    user_input = input("กรุณากรอก Token ของคุณ: ")
+    if user_input.strip():
+        save_token(user_input.strip())
+        my_token = user_input.strip()
+    else:
+        print("❌ คุณไม่ได้กรอก Token โปรแกรมจะปิดตัวลง")
+        time.sleep(3)
+        sys.exit()
+
+# ==========================================
+# 3. ส่วนการทำงานหลัก (Main Program)
+# ==========================================
+print(f"🔑 กำลังใช้งานด้วย Token: {my_token}")
+print("🚀 เริ่มต้นระบบบอท...")
+
 # ================= 1. ตั้งค่าระบบ (CONFIGURATION) =================
 SYMBOL     = "XAUUSD"
 TF_TRADE   = mt5.TIMEFRAME_M15  # เทรดบน M15
@@ -364,4 +416,5 @@ try:
 
 except KeyboardInterrupt: pass
 finally: mt5.shutdown()
+
 
