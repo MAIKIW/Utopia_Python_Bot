@@ -13,6 +13,12 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
+# --- เพิ่ม Library ที่จำเป็นต้องใช้ (ห้ามลบ) ---
+import sys
+import json
+import os
+# -------------------------------------------
+
 # ==========================================
 # 2. ส่วนระบบจัดการ Token (/settoken)
 # ==========================================
@@ -37,7 +43,6 @@ def load_token():
     return None
 
 # --- ตรวจสอบคำสั่ง /settoken จาก Arguments ---
-# วิธีใช้: python bot.py /settoken YOUR_API_KEY_HERE
 if len(sys.argv) > 2 and sys.argv[1] == "/settoken":
     new_token = sys.argv[2]
     save_token(new_token)
@@ -66,12 +71,12 @@ print(f"🔑 กำลังใช้งานด้วย Token: {my_token}")
 print("🚀 เริ่มต้นระบบบอท...")
 
 # ================= 1. ตั้งค่าระบบ (CONFIGURATION) =================
-SYMBOL     = "XAUUSD"
-TF_TRADE   = mt5.TIMEFRAME_M15  # เทรดบน M15
-TF_TREND   = mt5.TIMEFRAME_H1   # ดูเทรนด์ H1
-BASE_LOT   = 0.01
-MAX_GRID   = 5
-MAGIC      = 99999
+SYMBOL      = "XAUUSD"
+TF_TRADE    = mt5.TIMEFRAME_M15  # เทรดบน M15
+TF_TREND    = mt5.TIMEFRAME_H1   # ดูเทรนด์ H1
+BASE_LOT    = 0.01
+MAX_GRID    = 5
+MAGIC       = 99999
 
 # --- ตั้งค่า Dynamic (ATR/SR) ---
 ATR_PERIOD = 14
@@ -329,9 +334,24 @@ try:
                     last_update_id = u["update_id"]
                     if "message" in u and "text" in u["message"]:
                         cmd = u["message"]["text"].lower()
+                        
+                        # ================= เช็คคำสั่ง Telegram =================
                         if cmd == "/chart": 
                             tg_send("📸 กำลังโหลดกราฟ...")
                             img = generate_chart(); tg_send_photo(img) if img else tg_send("❌ สร้างกราฟไม่สำเร็จ")
+                        
+                        elif cmd == "/buy":
+                            tg_send("⚡ รับคำสั่ง: เปิดไม้ BUY เดี๋ยวนี้!")
+                            res = execute_trade("BUY", BASE_LOT, "Manual Telegram /buy")
+                            if res.retcode != mt5.TRADE_RETCODE_DONE:
+                                tg_send(f"❌ เปิดไม่สำเร็จ Error: {res.comment}")
+
+                        elif cmd == "/sell":
+                            tg_send("⚡ รับคำสั่ง: เปิดไม้ SELL เดี๋ยวนี้!")
+                            res = execute_trade("SELL", BASE_LOT, "Manual Telegram /sell")
+                            if res.retcode != mt5.TRADE_RETCODE_DONE:
+                                tg_send(f"❌ เปิดไม่สำเร็จ Error: {res.comment}")
+
                         elif cmd.startswith("/setlot"):
                             try: BASE_LOT = float(cmd.split()[1]); tg_send(f"✅ ปรับขนาดล็อตเป็น: {BASE_LOT} Lot")
                             except: pass
@@ -342,16 +362,20 @@ try:
                                 NEWS_API_KEY = new_key
                                 tg_send(f"✅ บันทึก News Key แล้ว!\nKey: {new_key[:5]}...")
                             except: tg_send("❌ พิมพ์ผิด! ตัวอย่าง: /setnews xxxxxxxx")
+                            
                         elif cmd == "/be": c=set_breakeven(); tg_send(f"🛡️ ตั้งบังทุนสำเร็จ: {c} ไม้")
+                        
                         elif cmd == "/status":
                             trend = "ขาขึ้น 🟢" if market_context['trend_h1']==1 else "ขาลง 🔴"
                             atr = max(MIN_GRID_DIST, market_context['atr_points']*ATR_MULTIPLIER)
                             news = "⛔ ติดข่าว (ห้ามเทรด)" if news_blocked else "✅ ปกติ"
                             tg_send(f"📊 <b>สถานะระบบปัจจุบัน</b>\n━━━━━━━━━━━━\n🕹️ <b>โหมด:</b> {MODE} | 📰 <b>ข่าว:</b> {news}\n🌊 <b>เทรนด์ใหญ่ H1:</b> {trend}\n📏 <b>ระยะแก้ไม้ ATR:</b> {atr:.0f} จุด\n🧱 <b>แนวรับ/ต้าน:</b> {market_context['support']:.1f} / {market_context['resistance']:.1f}")
+                        
                         elif cmd == "/report": tg_send(get_daily_report())
                         elif cmd == "/auto": MODE="AUTO"; tg_send("🤖 เปลี่ยนเป็นโหมด: AUTO")
                         elif cmd == "/semi": MODE="SEMI"; tg_send("🖐️ เปลี่ยนเป็นโหมด: SEMI")
                         elif cmd == "/closeall": close_all_positions(); tg_send("⛔ ปิดรวบทุกไม้แล้ว")
+                        # ====================================================
             except: pass
 
         if MODE == "SEMI": monitor_active_signal()
@@ -416,5 +440,3 @@ try:
 
 except KeyboardInterrupt: pass
 finally: mt5.shutdown()
-
-
