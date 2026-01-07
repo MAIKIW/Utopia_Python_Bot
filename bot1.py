@@ -523,7 +523,7 @@ try:
                     if dist >= grid_dist: 
                         execute_trade("BUY" if last.type==0 else "SELL", last.volume, f"แก้ไม้ (ATR {grid_dist:.0f})", is_grid=True)
             
-           # B. ระบบโหวตหาจังหวะเข้าใหม่ (Scoring Vote System)
+           # B. ระบบโหวตหาจังหวะเข้าใหม่ (Scoring Vote System - 6 Factors)
             else:
                 deep_news_analysis() # เช็คข่าว
                 if not news_blocked:
@@ -543,17 +543,27 @@ try:
                             score = 0; side = ""; pt = mt5.symbol_info(SYMBOL).point
                             curr_close = df['close'].iloc[-1]; curr_rsi = df[c_rsi].iloc[-1]
 
-                            # 🗳️ เริ่มการโหวตคะแนน
+                            # 🗳️ 1-2. เริ่มการโหวต Technical (2 คะแนน)
                             if curr_close < df[c_bbl].iloc[-1] and curr_rsi < 30: score += 2; side = "BUY"
                             elif curr_close > df[c_bbu].iloc[-1] and curr_rsi > 70: score += 2; side = "SELL"
 
                             if score >= 2:
+                                # 🗳️ 3. โหวต Trend H1 (1 คะแนน)
                                 if (side == "BUY" and market_context.get('trend_h1') == 1) or (side == "SELL" and market_context.get('trend_h1') == -1): score += 1
+                                # 🗳️ 4. โหวต Distance EMA20 (1 คะแนน)
                                 if (abs(curr_close - df[c_ema20].iloc[-1]) / pt) > 400: score += 1
+                                # 🗳️ 5. โหวต SR Buffer (1 คะแนน)
                                 if (side == "BUY" and (market_context['resistance'] - tick.ask)/pt >= SR_BUFFER) or (side == "SELL" and (tick.bid - market_context['support'])/pt >= SR_BUFFER): score += 1
+                                
+                                # 🗳️ 6. โหวต News Sentiment (เพิ่มคะแนนที่ 6)
+                                if side == "BUY" and cached_news_score > 0: score += 1
+                                elif side == "SELL" and cached_news_score < 0: score += 1
 
-                            if score >= 4:
-                                detail = f"มั่นใจ: {(score/5)*100}% | โหวต: {score}/5"
+                            # --- ตัดสินใจผลการโหวต (ใช้เกณฑ์ 5/6 คะแนน) ---
+                            if score >= 5:
+                                conf_percent = (score / 6) * 100
+                                detail = f"มั่นใจสูง: {conf_percent:.1f}% | โหวต: {score}/6"
+                                
                                 if MODE == "AUTO": execute_trade(side, BASE_LOT, detail)
                                 else: 
                                     send_signal_only(side, tick.ask if side=="BUY" else tick.bid, detail)
@@ -653,3 +663,4 @@ def telegram_command_addon(cmd):
 # END ADD-ON
 
 # ==================================================
+
