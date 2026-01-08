@@ -179,7 +179,54 @@ def get_daily_report():
             f"🔢 <b>จำนวนเทรด:</b> {total} (✅{win} / ❌{loss})")
 
 def monitor_active_signal():
-    pass 
+    global current_signal
+    if not current_signal: return
+    try:
+        # อัปเดตราคาล่าสุด
+        tick = mt5.symbol_info_tick(SYMBOL)
+        if not tick: return
+        
+        tick_price = tick.bid if current_signal['side'] == "BUY" else tick.ask
+        s = current_signal
+        
+        # สร้างตัวแปรกันแจ้งเตือนซ้ำ (ถ้ายังไม่มี)
+        if 'alerted' not in s: s['alerted'] = []
+
+        # --- เช็คเงื่อนไขแจ้งเตือน ---
+        if s['side'] == "BUY":
+            # TP1 Hit
+            if tick_price >= s['tp1'] and 'TP1' not in s['alerted']:
+                tg_send(f"🎯 <b>TP1 HIT (Alert)</b>\nBUY {SYMBOL}\nPrice: {tick_price:.2f}")
+                s['alerted'].append('TP1')
+            
+            # TP2 Hit (จบข่าว)
+            if tick_price >= s['tp2']:
+                tg_send(f"🎯 <b>TP2 HIT (Done)</b>\nBUY {SYMBOL}\nPrice: {tick_price:.2f}")
+                current_signal = None; return
+
+            # SL Hit (จบข่าว)
+            if tick_price <= s['sl']:
+                tg_send(f"🛑 <b>SL HIT (Stop)</b>\nBUY {SYMBOL}\nPrice: {tick_price:.2f}")
+                current_signal = None; return
+
+        elif s['side'] == "SELL":
+            # TP1 Hit
+            if tick_price <= s['tp1'] and 'TP1' not in s['alerted']:
+                tg_send(f"🎯 <b>TP1 HIT (Alert)</b>\nSELL {SYMBOL}\nPrice: {tick_price:.2f}")
+                s['alerted'].append('TP1')
+
+            # TP2 Hit
+            if tick_price <= s['tp2']:
+                tg_send(f"🎯 <b>TP2 HIT (Done)</b>\nSELL {SYMBOL}\nPrice: {tick_price:.2f}")
+                current_signal = None; return
+
+            # SL Hit
+            if tick_price >= s['sl']:
+                tg_send(f"🛑 <b>SL HIT (Stop)</b>\nSELL {SYMBOL}\nPrice: {tick_price:.2f}")
+                current_signal = None; return
+
+    except Exception as e:
+        log(f"Monitor Signal Error: {e}") 
 
 # 🔥 ฟังก์ชันใหม่: เฝ้าดูผลลัพธ์การเทรด (TP/SL Monitor)
 def monitor_trade_results():
@@ -359,6 +406,7 @@ try:
         
         # 2. Monitor Result
         monitor_trade_results()
+        monitor_active_signal()
 
         # 3. Market Update (30 min)
         if time.time() - last_market_update >= MARKET_UPDATE_INTERVAL:
@@ -491,13 +539,44 @@ try:
                                 elif side == "SELL" and cached_news_score < 0: score += 1
                                 
                             if score >= 4:
-                                detail = f"Score: {score}/6"
-                                if MODE == "AUTO": execute_trade(side, BASE_LOT, detail)
+                                # -----------------------------------------------------------
+                                # 🔥 1. คำนวณ Smart TP/SL รอไว้ก่อนเลย (ละเอียดครบทุก TP)
+                                # -----------------------------------------------------------
+                                pt = mt5.symbol_info(SYMBOL).point
+                                atr_val = market_context.get('atr_points', 0) * pt
+                                entry_price = tick.ask if side == "BUY" else tick.bid
+                                
+                                if side == "BUY":
+                                    tp1 = entry_price + (atr_val * 1.0)
+                                    tp2 = entry_price + (atr_val * 2.0)
+                                    sl  = entry_price - (atr_val * 1.5)
+                                else:
+                                    tp1 = entry_price - (atr_val * 1.0)
+                                    tp2 = entry_price - (atr_val * 2.0)
+                                    sl  = entry_price + (atr_val * 1.5)
+
+                                # 2. บันทึกข้อมูลลงตัวแปรกลาง (สำคัญมาก! ต้องมี tp1 และ alerted)
+                                current_signal = {
+                                    'side': side, 
+                                    'tp1': tp1, 
+                                    'tp2': tp2, 
+                                    'sl': sl, 
+                                    'alerted': [] # เอาไว้กันเตือนซ้ำ
+                                }
+                                # -----------------------------------------------------------
+
+                                detail = f"Score: {score}/6 | Smart ATR"
+                                
+                                if MODE == "AUTO": 
+                                    # เปิดออเดอร์ (execute_trade จะดึงค่า tp2/sl จาก current_signal ไปใช้เอง)
+                                    execute_trade(side, BASE_LOT, detail)
                                 else: 
-                                    send_signal_only(side, tick.ask if side=="BUY" else tick.bid, detail)
-                                    next_trade_time = time.time() + SIGNAL_PAUSE_SEC
+                                    send_signal_only(side, entry_price, detail)
+                                    
+                                next_trade_time = time.time() + SIGNAL_PAUSE_SEC
                         except: pass
         time.sleep(1)
 
 except KeyboardInterrupt: pass
 finally: mt5.shutdown()
+
