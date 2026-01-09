@@ -251,7 +251,7 @@ def monitor_trade_results():
                     tg_send(msg)
     except: pass
 
-# 🔥 ฟังก์ชันแสดงสถานะ (ปรับปรุงใหม่: ภาษาไทยมืออาชีพ + ดูง่าย)
+# ฟังก์ชันแสดงสถานะ
 def telegram_status_addon():
     try:
         acc = mt5.account_info()
