@@ -1,7 +1,5 @@
-# ==================================================================
-#    UTOPIA HYBRID PRO - GOD MODE (V16 ULTIMATE MONITOR - CORRECTED)
-#    Features: V12 (News) + V13 (ATR) + V15 (Smart Trade) + V16 (Result Monitor)
-#    Status: FIXED & READY TO RUN
+# ================================================================
+#    UTOPIA HYBRID BOT V.1
 # ==================================================================
 import MetaTrader5 as mt5
 import pandas as pd
@@ -18,13 +16,13 @@ import sys
 import json
 import os
 
-# ================= ⚠️ ใส่รหัสของคุณตรงนี้ ⚠️ =================
+# ================= ใส่รหัสตรงนี้ =================
 NEWS_API_KEY      = "fea0e08efe934cf9a3affdfd52f2084a"
 TELEGRAM_TOKEN    = "8268781368:AAEf7PFO84pX4G_5b6h_xasHe-MBu2zCLWU"
 TELEGRAM_CHAT_ID  = "-1003531261082"
-# =============================================================
+# ============================================
 
-# --- Config ---
+#  Config
 SYMBOL      = "XAUUSD"
 TF_TRADE    = mt5.TIMEFRAME_M15
 TF_TREND    = mt5.TIMEFRAME_H1
@@ -33,7 +31,7 @@ MAX_GRID    = 5
 MAGIC       = 99999
 MODE        = "SEMI"
 
-# --- Dynamic Settings ---
+# Dynamic Settings
 ATR_PERIOD = 14
 ATR_MULTIPLIER = 1.5
 MIN_GRID_DIST  = 300
@@ -228,7 +226,7 @@ def monitor_active_signal():
     except Exception as e:
         log(f"Monitor Signal Error: {e}") 
 
-# 🔥 ฟังก์ชันใหม่: เฝ้าดูผลลัพธ์การเทรด (TP/SL Monitor)
+# เฝ้าดูผลลัพธ์การเทรด (TP/SL Monitor)
 def monitor_trade_results():
     global last_known_deal
     try:
@@ -253,7 +251,6 @@ def monitor_trade_results():
                     tg_send(msg)
     except: pass
 
-# 🔥 ฟังก์ชันแสดงสถานะ (ย้ายมาไว้ตรงนี้ เพื่อให้บอทรู้จักก่อนเข้าลูป)
 # 🔥 ฟังก์ชันแสดงสถานะ (ปรับปรุงใหม่: ภาษาไทยมืออาชีพ + ดูง่าย)
 def telegram_status_addon():
     try:
@@ -291,7 +288,7 @@ def telegram_status_addon():
     except Exception as e:
         log(f"Status Error: {e}")
 
-# ================= EXECUTION (SMART LOGIC) =================
+# ================= EXECUTION =================
 def close_all_positions():
     pos = mt5.positions_get(symbol=SYMBOL, magic=MAGIC)
     c=0
@@ -391,16 +388,14 @@ def send_signal_only(side, price, detail):
 
 # ================= MAIN LOOP =================
 if not mt5.initialize(): quit()
-log("🚀 ระบบ UTOPIA HYBRID BOT (V16 Ultimate) เริ่มทำงานแล้ว")
+log("🚀 ระบบ UTOPIA HYBRID BOT เริ่มทำงานแล้ว")
 
-# --- Init Result Monitor ---
 h = mt5.history_deals_get(datetime.now() - timedelta(hours=24), datetime.now(), group=SYMBOL)
 if h: last_known_deal = h[-1].ticket
 else: last_known_deal = 0
 
 try:
     while True:
-        # 1. Update Market Context
         try: market_context = analyze_market_structure()
         except: pass
         
@@ -408,17 +403,16 @@ try:
         monitor_trade_results()
         monitor_active_signal()
 
-        # 3. Market Update (30 min)
+        # 3. อัปเดตตลาด
         if time.time() - last_market_update >= MARKET_UPDATE_INTERVAL:
             try:
-                # แปลงสถานะเทรนด์เป็นไทย
+                
                 trend = market_context.get('trend_h1')
                 if trend == 1:
                     trend_display = "🟢 ขาขึ้น (หน้า Buy ได้เปรียบ)"
                 else:
                     trend_display = "🔴 ขาลง (หน้า Sell ได้เปรียบ)"
                 
-                # แปลงสถานะข่าวเป็นไทย
                 if news_blocked:
                     news_status = "⛔ <b>อันตราย! (มีข่าวแรง/ระงับเทรด)</b>"
                 else:
@@ -430,7 +424,6 @@ try:
                 res = market_context.get('resistance', 0)
                 curr_time = datetime.now().strftime('%H:%M')
 
-                # สร้างข้อความ Dashboard ภาษาไทยสวยๆ
                 msg = (
                     f"📡 <b>รายงานสถานะตลาด: {SYMBOL}</b>\n"
                     f"🕒 <i>เวลาอัปเดต: {curr_time} น.</i>\n"
