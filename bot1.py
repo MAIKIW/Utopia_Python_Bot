@@ -1,5 +1,5 @@
-# ================================================================
-#    UTOPIA HYBRID BOT V.1
+# ==================================================================
+#    UTOPIA HYBRID BOT V.1 (FINAL CLEAN VERSION - READY TO RUN)
 # ==================================================================
 import MetaTrader5 as mt5
 import pandas as pd
@@ -37,6 +37,10 @@ ATR_MULTIPLIER = 1.5
 MIN_GRID_DIST  = 300
 SR_LOOKBACK    = 100
 SR_BUFFER      = 100
+TRAIL_STEP_ATR = 0.5
+
+BEST_ADX_THRESHOLD = 20  
+BEST_SL_BUFFER = 50
 
 BASKET_TP  = 5.0
 MAX_SPREAD = 50
@@ -124,25 +128,37 @@ def analyze_market_structure():
 def deep_news_analysis():
     global last_news_time, cached_news_score, news_blocked
     if "ใส่" in NEWS_API_KEY: return 0
-    if (time.time() - last_news_time < NEWS_INTERVAL): return cached_news_score
+    # เช็คว่าครบเวลาหรือยัง (ป้องกันการยิง API ถี่เกินไป)
+    if (time.time() - last_news_time < NEWS_INTERVAL) and last_news_time != 0: 
+        return cached_news_score
+        
     try:
         url = f"https://newsapi.org/v2/everything?q=gold+price+OR+inflation+OR+fed&sortBy=publishedAt&pageSize=10&apiKey={NEWS_API_KEY}"
         r = requests.get(url, timeout=5).json()
         articles = r.get("articles", [])
-        if not articles: return 0
-        s = SentimentIntensityAnalyzer()
+        
         impact = []
-        for a in articles:
-            txt = f"{a.get('title','')} {a.get('description','')} {a.get('content','')}".upper()
-            for k in HIGH_IMPACT_KEYWORDS:
-                if k in txt: impact.append(k)
+        if articles:
+            for a in articles:
+                txt = f"{a.get('title','')} {a.get('description','')} {a.get('content','')}".upper()
+                for k in HIGH_IMPACT_KEYWORDS:
+                    if k in txt: impact.append(k)
+        
+        # อัปเดตตัวแปร Global
         if impact:
-            news_blocked = True; tg_send(f"🚨 <b>ระงับการเทรด (ข่าวแรง)!</b>\nคำที่เจอ: {list(set(impact))}"); cached_news_score = 0
+            if not news_blocked: # เตือนเฉพาะตอนเปลี่ยนสถานะ
+                tg_send(f"🚨 <b>ระงับการเทรด (ข่าวแรง)!</b>\nคำที่เจอ: {list(set(impact))}")
+            news_blocked = True
+            cached_news_score = -10
         else:
-            news_blocked = False; cached_news_score = 0
+            news_blocked = False
+            cached_news_score = 0
+            
         last_news_time = time.time()
         return cached_news_score
-    except: return 0
+    except Exception as e:
+        # log(f"News Error: {e}")
+        return 0
 
 def get_daily_report():
     now = datetime.now(); start = datetime(now.year, now.month, now.day, 0,0)
@@ -269,6 +285,8 @@ def telegram_status_addon():
         # แปลงข้อความให้ดูดี
         trend_text = "🟢 ขาขึ้น " if trend == 1 else "🔴 ขาลง "
         mode_text = "🤖 อัตโนมัติ (AUTO)" if MODE == "AUTO" else "🖐️ กึ่งอัตโนมัติ (SEMI)"
+        
+        news_status = "⛔ อันตราย (มีข่าว)!" if news_blocked else "✅ ปกติ"
 
         # สร้างข้อความสวยๆ
         msg = (
@@ -282,7 +300,9 @@ def telegram_status_addon():
             f"💵 ยอดเงินคงเหลือ: <code>${acc.balance:,.2f}</code>\n"
             f"📈 อิควิตี้: <code>${acc.equity:,.2f}</code>\n"
             f"🔻 ความเสี่ยง (DD): <b>{dd:.2f}%</b>\n"
-            f"📝 ออเดอร์คงค้าง: <b>{len(pos) if pos else 0}</b> ไม้"
+            f"📝 ออเดอร์คงค้าง: <b>{len(pos) if pos else 0}</b> ไม้\n"
+            "━━━━━━━━━━━━━━━\n"
+            f"📰 สถานะข่าว: {news_status}"
         )
         tg_send(msg)
     except Exception as e:
@@ -386,9 +406,79 @@ def send_signal_only(side, price, detail):
     tg_send(msg)
     tg_send_photo(generate_chart())
 
+# ฟังก์ชันเลื่อน SL ตามกำไร (Trailing Stop)
+def process_trailing_stop():
+    try:
+        # ดึงออเดอร์ที่ถืออยู่
+        positions = mt5.positions_get(symbol=SYMBOL, magic=MAGIC)
+        if not positions: return
+
+        # ดึงค่า ATR ปัจจุบัน
+        atr_points = market_context.get('atr_points', 0)
+        if atr_points == 0: return
+        
+        pt = mt5.symbol_info(SYMBOL).point
+        atr_val = atr_points * pt # แปลงเป็นราคาจริง
+
+        for pos in positions:
+            current_price = mt5.symbol_info_tick(SYMBOL).bid if pos.type == 0 else mt5.symbol_info_tick(SYMBOL).ask
+            
+            # คำนวณระยะ Trailing (เช่น 0.5 * ATR)
+            step_dist = atr_val * TRAIL_STEP_ATR
+            
+            # 🟢 ฝั่ง BUY
+            if pos.type == 0: # BUY
+                # ถ้าราคาขึ้นไปสูงกว่าจุดอ้างอิง ให้คำนวณ SL ใหม่
+                # SL ใหม่ = ราคาปัจจุบัน - ระยะห่าง (Step)
+                new_sl = current_price - step_dist
+                
+                # เงื่อนไข: 
+                # 1. ต้องกำไรแล้ว (ราคา > entry)
+                # 2. SL ใหม่ต้องสูงกว่า SL เดิม (เลื่อนขึ้นทางเดียว ห้ามถอย)
+                # 3. SL ใหม่ต้องสูงกว่าจุดเปิด (กันทุน) - *Optional ถ้าอยากให้กันทุนเร็ว
+                if current_price > pos.price_open and new_sl > pos.sl:
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "position": pos.ticket,
+                        "sl": new_sl,
+                        "tp": pos.tp,
+                        "symbol": SYMBOL
+                    }
+                    mt5.order_send(request)
+                    print(f"🚀 Trailing Stop BUY: SL moved to {new_sl:.2f}")
+
+            # 🔴 ฝั่ง SELL
+            elif pos.type == 1: # SELL
+                new_sl = current_price + step_dist
+                
+                if current_price < pos.price_open and (new_sl < pos.sl or pos.sl == 0):
+                    request = {
+                        "action": mt5.TRADE_ACTION_SLTP,
+                        "position": pos.ticket,
+                        "sl": new_sl,
+                        "tp": pos.tp,
+                        "symbol": SYMBOL
+                    }
+                    mt5.order_send(request)
+                    print(f"🚀 Trailing Stop SELL: SL moved to {new_sl:.2f}")
+
+    except Exception as e:
+        log(f"Trailing Error: {e}")
+
 # ================= MAIN LOOP =================
-if not mt5.initialize(): quit()
+if not mt5.initialize(): 
+    print("❌ MT5 Init Failed")
+    quit()
+
 log("🚀 ระบบ UTOPIA HYBRID BOT เริ่มทำงานแล้ว")
+
+# 🔥 1. เช็คข่าวทันทีตอนเปิดบอท (เพื่ออัปเดตสถานะก่อนเริ่มทำงานจริง)
+log("⏳ กำลังโหลดสถานะข่าว...")
+try:
+    deep_news_analysis()
+    if news_blocked: log("⛔ ข่าวแรง: ระงับการเทรดชั่วคราว")
+    else: log("✅ ข่าวปกติ: พร้อมเทรด")
+except: pass
 
 h = mt5.history_deals_get(datetime.now() - timedelta(hours=24), datetime.now(), group=SYMBOL)
 if h: last_known_deal = h[-1].ticket
@@ -396,12 +486,17 @@ else: last_known_deal = 0
 
 try:
     while True:
+        # 🔥 2. เช็คข่าวทุกรอบ (ไม่ว่าจะถือออเดอร์หรือไม่)
+        # ฟังก์ชัน deep_news_analysis มีตัวเช็คเวลาในตัวอยู่แล้ว (ไม่โหลดหนัก)
+        deep_news_analysis()
+
         try: market_context = analyze_market_structure()
         except: pass
         
         # 2. Monitor Result
         monitor_trade_results()
         monitor_active_signal()
+        process_trailing_stop()
 
         # 3. อัปเดตตลาด
         if time.time() - last_market_update >= MARKET_UPDATE_INTERVAL:
@@ -431,7 +526,7 @@ try:
                     f"🌊 <b>เทรนด์ (H1)</b>\n"
                     f"➤ แนวโน้ม: {trend_display}\n"
                     f"➤ ความผันผวน (ATR): <b>{atr:.0f}</b> จุด\n\n"
-                    f"🛡️ <b>จุดยุทธศาสตร์สำคัญ</b>\n"
+                    f"🛡️ <b>จุดแนวต้านแนวรับสำคัญ</b>\n"
                     f"🧱 แนวต้าน: <code>{res:.2f}</code>\n"
                     f"🧶 แนวรับ:  <code>{sup:.2f}</code>\n"
                     f"━━━━━━━━━━━━━━━\n"
@@ -488,7 +583,7 @@ try:
         except Exception as e:
             log(f"Telegram Error: {e}")
 
-        # 5. Trading Logic
+        # 5. Trading Logic (V31 SMC + ADX)
         if time.time() >= next_trade_time:
             pos = mt5.positions_get(symbol=SYMBOL, magic=MAGIC)
             
@@ -504,72 +599,85 @@ try:
                     if dist >= grid_dist: 
                         execute_trade("BUY" if last.type==0 else "SELL", last.volume, f"Grid (ATR {grid_dist:.0f})", is_grid=True)
             
-            # New Entry
+            # New Entry (V31 Engine)
             else:
+                # 1. เช็คข่าวก่อน
                 deep_news_analysis()
                 if not news_blocked:
+                    
+                    # เช็ค Spread
                     tick = mt5.symbol_info_tick(SYMBOL)
                     if (tick.ask - tick.bid)/mt5.symbol_info(SYMBOL).point <= MAX_SPREAD:
+                        
                         r = mt5.copy_rates_from_pos(SYMBOL, TF_TRADE, 0, 300)
                         df = pd.DataFrame(r)
-                        df.ta.ema(20, append=True); df.ta.ema(50, append=True)
-                        df.ta.rsi(14, append=True); df.ta.bbands(20, append=True)
                         
+                        # สร้างอินดิเคเตอร์
+                        df.ta.adx(length=14, append=True)
+                        df.ta.ema(length=200, append=True)
+                        df.ta.atr(length=14, append=True)
+
                         try:
-                            c_rsi = [c for c in df.columns if c.startswith('RSI')][0]
-                            c_bbl = [c for c in df.columns if c.startswith('BBL')][0]
-                            c_bbu = [c for c in df.columns if c.startswith('BBU')][0]
-                            c_ema20 = [c for c in df.columns if c.startswith('EMA_20')][0]
-                            curr_close = df['close'].iloc[-1]; curr_rsi = df[c_rsi].iloc[-1]
-                            score = 0; side = ""
+                            curr = df.iloc[-1]
+                            prev = df.iloc[-2]
                             
-                            if curr_close < df[c_bbl].iloc[-1] and curr_rsi < 30: score += 2; side = "BUY"
-                            elif curr_close > df[c_bbu].iloc[-1] and curr_rsi > 70: score += 2; side = "SELL"
+                            c_adx = [c for c in df.columns if c.startswith('ADX')][0]
+                            c_ema = [c for c in df.columns if c.startswith('EMA_200')][0]
+                            c_atr = [c for c in df.columns if c.startswith('ATRr')][0]
                             
-                            if score >= 2:
-                                if (side == "BUY" and market_context.get('trend_h1') == 1) or (side == "SELL" and market_context.get('trend_h1') == -1): score += 1
-                                if side == "BUY" and cached_news_score > 0: score += 1
-                                elif side == "SELL" and cached_news_score < 0: score += 1
+                            adx_val = curr[c_adx]
+                            ema_val = curr[c_ema]
+                            atr_val = curr[c_atr]
+                            
+                            signal_side = None
+                            
+                            # 🔥 ENTRY LOGIC: SMC + ADX > 25
+                            if adx_val > BEST_ADX_THRESHOLD:
                                 
-                            if score >= 4:
-                                # -----------------------------------------------------------
-                                # 🔥 1. คำนวณ Smart TP/SL รอไว้ก่อนเลย (ละเอียดครบทุก TP)
-                                # -----------------------------------------------------------
+                                # BUY
+                                if (curr['close'] > ema_val) and \
+                                   (curr['low'] < prev['low']) and \
+                                   (curr['close'] > prev['high']):
+                                    signal_side = "BUY"
+                                    
+                                # SELL
+                                elif (curr['close'] < ema_val) and \
+                                     (curr['high'] > prev['high']) and \
+                                     (curr['close'] < prev['low']):
+                                     signal_side = "SELL"
+                            
+                            if signal_side:
                                 pt = mt5.symbol_info(SYMBOL).point
-                                atr_val = market_context.get('atr_points', 0) * pt
-                                entry_price = tick.ask if side == "BUY" else tick.bid
+                                atr_price = atr_val
+                                entry_price = tick.ask if signal_side == "BUY" else tick.bid
                                 
-                                if side == "BUY":
-                                    tp1 = entry_price + (atr_val * 1.0)
-                                    tp2 = entry_price + (atr_val * 2.0)
-                                    sl  = entry_price - (atr_val * 1.5)
+                                if signal_side == "BUY":
+                                    sl = curr['low'] - (BEST_SL_BUFFER * pt)
+                                    tp1 = entry_price + (atr_price * 1.0)
+                                    tp2 = entry_price + (atr_price * 5.0)
                                 else:
-                                    tp1 = entry_price - (atr_val * 1.0)
-                                    tp2 = entry_price - (atr_val * 2.0)
-                                    sl  = entry_price + (atr_val * 1.5)
+                                    sl = curr['high'] + (BEST_SL_BUFFER * pt)
+                                    tp1 = entry_price - (atr_price * 1.0)
+                                    tp2 = entry_price - (atr_price * 5.0)
 
-                                # 2. บันทึกข้อมูลลงตัวแปรกลาง (สำคัญมาก! ต้องมี tp1 และ alerted)
                                 current_signal = {
-                                    'side': side, 
-                                    'tp1': tp1, 
-                                    'tp2': tp2, 
-                                    'sl': sl, 
-                                    'alerted': [] # เอาไว้กันเตือนซ้ำ
+                                    'side': signal_side, 
+                                    'tp1': tp1, 'tp2': tp2, 'sl': sl, 
+                                    'alerted': []
                                 }
-                                # -----------------------------------------------------------
-
-                                detail = f"Score: {score}/6 | Smart ATR"
+                                
+                                detail = f"SMC Sweep | ADX {adx_val:.1f} (Strong)"
                                 
                                 if MODE == "AUTO": 
-                                    # เปิดออเดอร์ (execute_trade จะดึงค่า tp2/sl จาก current_signal ไปใช้เอง)
-                                    execute_trade(side, BASE_LOT, detail)
+                                    execute_trade(signal_side, BASE_LOT, detail)
                                 else: 
-                                    send_signal_only(side, entry_price, detail)
+                                    send_signal_only(signal_side, entry_price, detail)
                                     
                                 next_trade_time = time.time() + SIGNAL_PAUSE_SEC
-                        except: pass
+                                
+                        except Exception as e:
+                            log(f"Logic Error: {e}")
         time.sleep(1)
 
 except KeyboardInterrupt: pass
 finally: mt5.shutdown()
-
