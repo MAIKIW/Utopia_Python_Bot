@@ -119,7 +119,7 @@ for i in range(2, limit_candles):
             if curr['low'] <= t['sl']:
                 result = (t['sl'] - t['entry']) * LOT_SIZE * 100 
                 closed = True
-                reason = "Trailing Win" if t.get('status') else "SL Cut"
+                reason = "ชนะ Trailing" if t.get('status') else "SL Cut"
 
         else: # SELL
             if (t['entry'] - curr['low']) >= (atr * 1.0):
@@ -129,7 +129,7 @@ for i in range(2, limit_candles):
             if curr['high'] >= t['sl']:
                 result = (t['entry'] - t['sl']) * LOT_SIZE * 100
                 closed = True
-                reason = "Trailing Win" if t.get('status') else "SL Cut"
+                reason = "ชนะ Trailing" if t.get('status') else "SL Cut"
         
         if closed:
             net_profit = result - COMMISSION
@@ -137,11 +137,11 @@ for i in range(2, limit_candles):
             emoji = "✅" if net_profit > 0 else "❌"
             
             # 🔥 แจ้งเตือนปิดออเดอร์
-            msg = (f"{emoji} <b>SIMULATION: Closed {t['side']}</b>\n"
-                   f"Price: {t['entry']:.2f} -> {t['sl']:.2f}\n"
-                   f"Profit: ${net_profit:.2f}\n"
-                   f"Reason: {reason}")
-            print(f"Send Close: {net_profit:.2f}")
+            msg = (f"{emoji} <b>ทดสอบการแจ้งเตือน: ปิด {t['side']}</b>\n"
+                   f"ราคา: {t['entry']:.2f} -> {t['sl']:.2f}\n"
+                   f"กำไร: ${net_profit:.2f}\n"
+                   f"เหตุผล: {reason}")
+            print(f"ปิด: {net_profit:.2f}")
             tg_send(msg)
             
             active_trade = None
@@ -156,11 +156,11 @@ for i in range(2, limit_candles):
                 active_trade = {'side': 'BUY', 'entry': curr['close'], 'sl': sl, 'atr': curr['ATR']}
                 
                 # 🔥 แจ้งเตือนเปิดออเดอร์
-                msg = (f"🔵 <b>SIMULATION: Open BUY</b>\n"
-                       f"Price: {curr['close']:.2f}\n"
+                msg = (f"🔵 <b>ทดสอบแจ้งเตือน: เปิด BUY</b>\n"
+                       f"ราคา: {curr['close']:.2f}\n"
                        f"SL: {sl:.2f}\n"
                        f"ADX: {curr['ADX']:.1f}")
-                print("Send Open BUY")
+                print("ส่งเปิด BUY")
                 tg_send(msg)
                 trade_count += 1
                 time.sleep(0.1) # ⚠️ หน่วงเวลา
@@ -171,8 +171,8 @@ for i in range(2, limit_candles):
                 active_trade = {'side': 'SELL', 'entry': curr['close'], 'sl': sl, 'atr': curr['ATR']}
                 
                 # 🔥 แจ้งเตือนเปิดออเดอร์
-                msg = (f"🔴 <b>SIMULATION: Open SELL</b>\n"
-                       f"Price: {curr['close']:.2f}\n"
+                msg = (f"🔴 <b>ทดสอบแจ้งเตือน: เปิด SELL</b>\n"
+                       f"ราคา: {curr['close']:.2f}\n"
                        f"SL: {sl:.2f}\n"
                        f"ADX: {curr['ADX']:.1f}")
                 print("Send Open SELL")
@@ -182,4 +182,5 @@ for i in range(2, limit_candles):
 
 # สรุปจบ
 tg_send(f"🏁 <b>BACKTEST FINISHED</b>\nTotal Trades: {trade_count}\nFinal Balance: ${balance:,.2f}")
+
 print("Done.")
