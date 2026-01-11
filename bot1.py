@@ -39,7 +39,7 @@ SR_LOOKBACK    = 100
 SR_BUFFER      = 100
 TRAIL_STEP_ATR = 0.5
 
-BEST_ADX_THRESHOLD = 20  
+BEST_ADX_THRESHOLD = 15  
 BEST_SL_BUFFER = 50
 
 BASKET_TP  = 5.0
@@ -634,17 +634,13 @@ try:
                             # 🔥 ENTRY LOGIC: SMC + ADX > 25
                             if adx_val > BEST_ADX_THRESHOLD:
                                 
-                                # BUY
-                                if (curr['close'] > ema_val) and \
-                                   (curr['low'] < prev['low']) and \
-                                   (curr['close'] > prev['high']):
+                                # BUY: ราคาปิดเหนือ EMA + แท่งปัจจุบันชนะ High ก่อนหน้า (Breakout)
+                                if (curr['close'] > ema_val) and (curr['close'] > prev['high']):
                                     signal_side = "BUY"
                                     
-                                # SELL
-                                elif (curr['close'] < ema_val) and \
-                                     (curr['high'] > prev['high']) and \
-                                     (curr['close'] < prev['low']):
-                                     signal_side = "SELL"
+                                # SELL: ราคาปิดใต้ EMA + แท่งปัจจุบันหลุด Low ก่อนหน้า (Breakout)
+                                elif (curr['close'] < ema_val) and (curr['close'] < prev['low']):
+                                    signal_side = "SELL"
                             
                             if signal_side:
                                 pt = mt5.symbol_info(SYMBOL).point
@@ -681,3 +677,4 @@ try:
 
 except KeyboardInterrupt: pass
 finally: mt5.shutdown()
+
