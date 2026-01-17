@@ -15,6 +15,9 @@ nltk.download('vader_lexicon', quiet=True)
 import sys
 import json
 import os
+import csv
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 # ================= ใส่รหัสตรงนี้ =================
 NEWS_API_KEY      = "fea0e08efe934cf9a3affdfd52f2084a"
@@ -63,6 +66,10 @@ market_context = {'trend_h1': 0, 'atr_points': 0, 'support': 0, 'resistance': 0}
 last_market_update = 0
 MARKET_UPDATE_INTERVAL = 1800
 last_known_deal = 0
+# 🔥 ตั้งค่ารายงานผล
+REPORT_INTERVAL = 900  # 900 วินาที = 15 นาที
+CSV_FILENAME = "port_log.csv"
+last_report_time = 0   # ตัวแปรนับเวลา
 
 # ================= TOOLS =================
 def log(msg): print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
@@ -73,11 +80,115 @@ def tg_send(msg):
         requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=3)
     except: pass
 
-def tg_send_photo(photo_file):
+# ================= DATA & REPORTING SYSTEM =================
+def log_port_data():
+    """บันทึกข้อมูลพอร์ตลง CSV ทุก 15 นาที"""
+    try:
+        acc = mt5.account_info()
+        if not acc: return
+        
+        # ถ้าไม่มีไฟล์ ให้สร้างหัวตารางก่อน
+        file_exists = os.path.exists(CSV_FILENAME)
+        
+        with open(CSV_FILENAME, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            if not file_exists:
+                writer.writerow(['Timestamp', 'Balance', 'Equity'])
+            
+            writer.writerow([datetime.now(), acc.balance, acc.equity])
+    except Exception as e:
+        log(f"CSV Error: {e}")
+
+def get_profit_stats(start_date):
+    """คำนวณกำไรจากช่วงเวลาที่กำหนด"""
+    try:
+        now = datetime.now()
+        history = mt5.history_deals_get(start_date, now, group=SYMBOL)
+        if not history: return 0.0, 0
+        
+        net_profit = 0.0
+        trades = 0
+        for d in history:
+            if d.magic == MAGIC and d.entry == mt5.DEAL_ENTRY_OUT:
+                net_profit += (d.profit + d.commission + d.swap)
+                trades += 1
+        return net_profit, trades
+    except: return 0.0, 0
+
+def generate_performance_report():
+    """สร้างกราฟและข้อความรายงานผล"""
+    try:
+        # 1. อ่านข้อมูลจาก CSV
+        if not os.path.exists(CSV_FILENAME): return None, "No Data"
+        
+        df = pd.read_csv(CSV_FILENAME)
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+        
+        # เอาข้อมูลแค่ 48 ชม. ล่าสุดมาพล็อตกราฟ (เพื่อให้กราฟดูง่าย ไม่ยิบเกินไป)
+        start_plot = datetime.now() - timedelta(hours=48)
+        df_plot = df[df['Timestamp'] >= start_plot]
+        
+        if len(df_plot) < 2: return None, "Data too short"
+
+        # 2. สร้างกราฟ
+        plt.figure(figsize=(10, 5))
+        plt.plot(df_plot['Timestamp'], df_plot['Balance'], label='Balance', color='#007bff', linewidth=2)
+        plt.plot(df_plot['Timestamp'], df_plot['Equity'], label='Equity', color='#28a745', linestyle='--', linewidth=1.5)
+        
+        plt.title(f'Port Performance (Last 48h): {SYMBOL}')
+        plt.xlabel('Time')
+        plt.ylabel('USD')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        plt.tight_layout()
+
+        # Save to buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        plt.close()
+
+        # 3. คำนวณตัวเลขกำไร
+        now = datetime.now()
+        day_start = datetime(now.year, now.month, now.day)
+        month_start = datetime(now.year, now.month, 1)
+        
+        day_profit, day_trades = get_profit_stats(day_start)
+        month_profit, month_trades = get_profit_stats(month_start)
+        
+        acc = mt5.account_info()
+        drawdown = 0.0
+        if acc.balance > 0:
+            drawdown = ((acc.balance - acc.equity) / acc.balance) * 100
+
+        # สร้างข้อความ Caption
+        caption = (
+            f"📊 <b>รายงานพอร์ตประจำวัน - เดือน</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"📅 <b>วันนี้ ({day_trades} ไม้):</b>\n"
+            f"👉 กำไร: <b>${day_profit:+,.2f}</b> {'🔥' if day_profit>=0 else '🔻'}\n\n"
+            f"🗓️ <b>เดือนนี้ ({month_trades} ไม้):</b>\n"
+            f"👉 กำไร: <b>${month_profit:+,.2f}</b>\n"
+            f"━━━━━━━━━━━━━━━━\n"
+            f"💵 Balance: ${acc.balance:,.2f}\n"
+            f"📉 Equity: ${acc.equity:,.2f}\n"
+            f"⚠️ Drawdown: {drawdown:.2f}%"
+        )
+        
+        return buf, caption
+
+    except Exception as e:
+        log(f"Report Gen Error: {e}")
+        return None, str(e)
+
+def tg_send_photo(photo_file, caption=""):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
         files = {'photo': photo_file}
-        requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID}, files=files, timeout=10)
+        # เพิ่ม caption ตรงนี้
+        data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': caption, 'parse_mode': 'HTML'}
+        requests.post(url, data=data, files=files, timeout=20)
     except: pass
 
 def generate_chart():
@@ -480,6 +591,8 @@ try:
     else: log("✅ ข่าวปกติ: พร้อมเทรด")
 except: pass
 
+log_port_data()
+
 h = mt5.history_deals_get(datetime.now() - timedelta(hours=24), datetime.now(), group=SYMBOL)
 if h: last_known_deal = h[-1].ticket
 else: last_known_deal = 0
@@ -501,40 +614,42 @@ try:
         # 3. อัปเดตตลาด
         if time.time() - last_market_update >= MARKET_UPDATE_INTERVAL:
             try:
+                is_weekend = datetime.now().weekday() in [5, 6]
                 
-                trend = market_context.get('trend_h1')
-                if trend == 1:
-                    trend_display = "🟢 ขาขึ้น (หน้า Buy ได้เปรียบ)"
-                else:
-                    trend_display = "🔴 ขาลง (หน้า Sell ได้เปรียบ)"
+                if not is_weekend:
+                    trend = market_context.get('trend_h1')
+                    if trend == 1:
+                        trend_display = "🟢 ขาขึ้น (หน้า Buy ได้เปรียบ)"
+                    else:
+                        trend_display = "🔴 ขาลง (หน้า Sell ได้เปรียบ)"
                 
-                if news_blocked:
-                    news_status = "⛔ <b>อันตราย! (มีข่าวแรง/ระงับเทรด)</b>"
-                else:
-                    news_status = "✅ <b>ปกติ (ตลาดปลอดภัย)</b>"
+                    if news_blocked:
+                        news_status = "⛔ <b>อันตราย! (มีข่าวแรง/ระงับเทรด)</b>"
+                    else:
+                        news_status = "✅ <b>ปกติ (ตลาดปลอดภัย)</b>"
 
                 # ดึงค่า Technical
-                atr = market_context.get('atr_points', 0)
-                sup = market_context.get('support', 0)
-                res = market_context.get('resistance', 0)
-                curr_time = datetime.now().strftime('%H:%M')
+                    atr = market_context.get('atr_points', 0)
+                    sup = market_context.get('support', 0)
+                    res = market_context.get('resistance', 0)
+                    curr_time = datetime.now().strftime('%H:%M')
 
-                msg = (
-                    f"📡 <b>รายงานสถานะตลาด: {SYMBOL}</b>\n"
-                    f"🕒 <i>เวลาอัปเดต: {curr_time} น.</i>\n"
-                    f"━━━━━━━━━━━━━━━\n"
-                    f"🌊 <b>เทรนด์ (H1)</b>\n"
-                    f"➤ แนวโน้ม: {trend_display}\n"
-                    f"➤ ความผันผวน (ATR): <b>{atr:.0f}</b> จุด\n\n"
-                    f"🛡️ <b>จุดแนวต้านแนวรับสำคัญ</b>\n"
-                    f"🧱 แนวต้าน: <code>{res:.2f}</code>\n"
-                    f"🧶 แนวรับ:  <code>{sup:.2f}</code>\n"
-                    f"━━━━━━━━━━━━━━━\n"
-                    f"📰 <b>สถานะข่าวเศรษฐกิจ:</b>\n"
-                    f"{news_status}"
-                )
+                    msg = (
+                        f"📡 <b>รายงานสถานะตลาด: {SYMBOL}</b>\n"
+                        f"🕒 <i>เวลาอัปเดต: {curr_time} น.</i>\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"🌊 <b>เทรนด์ (H1)</b>\n"
+                        f"➤ แนวโน้ม: {trend_display}\n"
+                        f"➤ ความผันผวน (ATR): <b>{atr:.0f}</b> จุด\n\n"
+                        f"🛡️ <b>จุดแนวต้านแนวรับสำคัญ</b>\n"
+                        f"🧱 แนวต้าน: <code>{res:.2f}</code>\n"
+                        f"🧶 แนวรับ:  <code>{sup:.2f}</code>\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"📰 <b>สถานะข่าวเศรษฐกิจ:</b>\n"
+                        f"{news_status}"
+                    )
                 
-                tg_send(msg)
+                    tg_send(msg)
                 last_market_update = time.time()
             except Exception as e:
                 log(f"Market Update Error: {e}")
@@ -673,8 +788,36 @@ try:
                                 
                         except Exception as e:
                             log(f"Logic Error: {e}")
+                            # 🔥 3. REPORTING SYSTEM (Every 15 mins)
+        is_weekend = datetime.now().weekday() in [5, 6]
+        
+        # ถ้าวันหยุด ให้ส่งทุก 4 ชั่วโมง (14400 วิ), ถ้าวันธรรมดา ส่งทุก 15 นาที (900 วิ)
+        current_interval = 14400 if is_weekend else REPORT_INTERVAL
+        
+        if time.time() - last_report_time >= current_interval:
+            log("📊 Processing Report...")
+            log_port_data() # บันทึกข้อมูลลง CSV ตามปกติ (กราฟจะได้ต่อเนื่อง)
+            
+            if is_weekend:
+                # 🌙 โหมดวันหยุด: ส่งข้อความสั้นๆ
+                acc = mt5.account_info()
+                msg = (f"💤 <b>ตลาดปิด (เสาร์-อาทิตย์)</b>\n"
+                       f"━━━━━━━━━━━━━━━━\n"
+                       f"🤖 สถานะบอท: <b>Standby</b>\n"
+                       f"💵 Balance: ${acc.balance:,.2f}\n"
+                       f"📉 Equity: ${acc.equity:,.2f}\n"
+                       f"⏳ เจอกันใหม่เช้าวันจันทร์!")
+                tg_send(msg)
+            else:
+                # ☀️ โหมดวันธรรมดา: ส่งกราฟเต็มรูปแบบ
+                img, caption = generate_performance_report()
+                if img:
+                    tg_send_photo(img, caption)
+            
+            last_report_time = time.time()
         time.sleep(1)
 
 except KeyboardInterrupt: pass
 finally: mt5.shutdown()
+
 
