@@ -116,23 +116,36 @@ if show_ob and pl_exists
         box.new(bar_index[5], high[5], bar_index + 30, low[5], border_color=na, bgcolor=c_ob_bull_un,
              text="Bullish OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
-// -------------------------------------------------------------------------
-// SUPPLY / DEMAND (FILTERED BY TREND)
+// // -------------------------------------------------------------------------
+// SUPPLY / DEMAND (HIGH QUALITY FILTER)
 // -------------------------------------------------------------------------
 
-// Supply Zone (Bearish Engulfing) + ต้องเป็นขาลง (Trend Down)
+// คำนวณขนาดตัวแท่งเทียน (Body Size)
+bodySize = math.abs(close - open)
+prevBody = math.abs(close[1] - open[1])
+atrVal   = ta.atr(14) // ความผันผวนเฉลี่ย 14 แท่ง
+
+// 🔥 กฎเหล็กความแรง (Strong Momentum Rules)
+// 1. แท่งปัจจุบันต้องใหญ่กว่าแท่งก่อนหน้า 1.2 เท่า (แสดงแรงชนะขาด)
+isStrongMove = bodySize > (prevBody * 1.2)
+// 2. แท่งปัจจุบันต้องมีขนาดไม่เล็กเกินไป (ต้องมากกว่า 50% ของค่าเฉลี่ย ATR)
+isSignificant = bodySize > (atrVal * 0.5)
+
+// --- Supply Zone (Strong Bearish Engulfing) ---
 isEngulfBear = close < open and close < low[1] and open >= close[1]
-// เพิ่มเงื่อนไข 'and trendDown' เพื่อกรองเฉพาะสวนเทรนด์ขาลง
-if show_sd and isEngulfBear and trendDown
-    box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_sup, 
-         text="Supply Zone", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
-// Demand Zone (Bullish Engulfing) + ต้องเป็นขาขึ้น (Trend Up)
+// เงื่อนไขรวม: กลืนกิน + ตามเทรนด์ขาลง + แรงขายชนะขาด + แท่งใหญ่พอ
+if show_sd and isEngulfBear and trendDown and isStrongMove and isSignificant
+    box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_sup, 
+         text="Strong Supply", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+
+// --- Demand Zone (Strong Bullish Engulfing) ---
 isEngulfBull = close > open and close > high[1] and open <= close[1]
-// เพิ่มเงื่อนไข 'and trendUp' เพื่อกรองเฉพาะตามเทรนด์ขาขึ้น
-if show_sd and isEngulfBull and trendUp
+
+// เงื่อนไขรวม: กลืนกิน + ตามเทรนด์ขาขึ้น + แรงซื้อชนะขาด + แท่งใหญ่พอ
+if show_sd and isEngulfBull and trendUp and isStrongMove and isSignificant
     box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_dem, 
-         text="Demand Zone", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+         text="Strong Demand", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
 // Market Structure
 prev_high_val = ta.valuewhen(ph_exists, high[5], 0)
