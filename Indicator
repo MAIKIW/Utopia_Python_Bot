@@ -1,0 +1,233 @@
+// This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// @version=5
+indicator("UTOPIA_Entry_Zone", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// -------------------------------------------------------------------------
+// 1. SETTINGS INPUTS
+// -------------------------------------------------------------------------
+
+grp_show = "ON/OFF Settings"
+show_ms      = input.bool(true, "Show Market Structure (ChoCH/BOS)", group=grp_show)
+show_ob      = input.bool(true, "Show Order Block [OB]", group=grp_show)
+show_sd      = input.bool(true, "Show Demand & Supply [Zones]", group=grp_show)
+show_ch      = input.bool(true, "Show High/Low Channel [Line]", group=grp_show)
+show_trend   = input.bool(true, "Show Trend-Area [Area]", group=grp_show)
+show_ma1     = input.bool(true, "Show Moving Average (1) [Line]", group=grp_show)
+show_ma2     = input.bool(true, "Show Moving Average (2) [Line]", group=grp_show)
+show_sig     = input.bool(true, "Show Buy-Sell [Signal]", group=grp_show)
+show_tb      = input.bool(true, "Show Top-Bottom [Signal]", group=grp_show)
+
+grp_ord = "Order History Function"
+show_curr    = input.bool(true, "Show Current Order [Line/Label]", group=grp_ord)
+show_lbl     = input.bool(true, "Show Label Price (Entry,TP,SL)", group=grp_ord)
+show_hist    = input.bool(false, "Show History Order [Line]", group=grp_ord)
+
+grp_tbl = "Table Settings"
+tbl_pos_in   = input.string("Top Right", "Panel Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group=grp_tbl)
+tbl_size_in  = input.string("Small", "Text Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tbl)
+
+grp_smc = "Demand/Supply & OrderBlock Settings"
+c_ob_bear_un = input.color(color.new(color.red, 60), "Bearish OB Color", group=grp_smc)
+c_ob_bull_un = input.color(color.new(color.green, 60), "Bullish OB Color", group=grp_smc)
+c_sup        = input.color(color.new(color.orange, 50), "Supply Zone Color", group=grp_smc)
+c_dem        = input.color(color.new(color.lime, 50), "Demand Zone Color", group=grp_smc)
+
+grp_ma = "Moving Average Setting"
+c_ma1        = input.color(color.new(color.yellow, 0), "Color First MA", group=grp_ma)
+len_ma1      = input.int(50, "Length First", group=grp_ma)
+c_ma2        = input.color(color.new(color.white, 0), "Color Second MA", group=grp_ma)
+len_ma2      = input.int(100, "Length Second", group=grp_ma)
+c_uptrend    = input.color(color.new(color.green, 80), "Uptrend Area", group=grp_ma)
+c_dntrend    = input.color(color.new(color.red, 80), "Downtrend Area", group=grp_ma)
+
+grp_ch = "High/Low Channel Setting"
+len_linreg   = input.int(200, "Period", group=grp_ch)
+mult_ch      = input.float(2.0, "Multiplier", group=grp_ch)
+c_ch         = input.color(color.new(color.gray, 50), "Color Line Channel", group=grp_ch)
+
+grp_tpsl = "TP / SL Setting"
+atr_len      = input.int(50, "ATR Length", group=grp_tpsl)
+fac_tp1      = input.float(1.5, "Factor TP1", group=grp_tpsl)
+fac_tp2      = input.float(3.0, "Factor TP2", group=grp_tpsl)
+fac_tp3      = input.float(4.5, "Factor TP3", group=grp_tpsl)
+fac_sl       = input.float(3.0, "Factor SL", group=grp_tpsl)
+c_tp_line    = input.color(color.green, "Color TP Line", group=grp_tpsl)
+c_sl_line    = input.color(color.red, "Color SL Line", group=grp_tpsl)
+c_ent_line   = input.color(color.blue, "Color Entry Line", group=grp_tpsl)
+
+grp_col = "Color Signal Setting"
+c_buy        = input.color(color.green, "Color Buy Signal", group=grp_col)
+c_sell       = input.color(color.red, "Color Sell Signal", group=grp_col)
+c_tb         = input.color(color.orange, "Color Top/Bottom Signal", group=grp_col)
+
+// -------------------------------------------------------------------------
+// 2. CALCULATIONS & LOGIC
+// -------------------------------------------------------------------------
+
+// --- Trend ---
+ma1 = ta.ema(close, len_ma1)
+ma2 = ta.ema(close, len_ma2)
+trendUp = ma1 > ma2
+trendDown = ma1 < ma2
+
+fillColor = trendUp ? c_uptrend : (trendDown ? c_dntrend : na)
+p1 = plot(show_trend ? ma1 : na, display=display.none)
+p2 = plot(show_trend ? ma2 : na, display=display.none)
+fill(p1, p2, color=show_trend ? fillColor : na, title="Trend Area")
+plot(show_ma1 ? ma1 : na, "MA 1", color=c_ma1)
+plot(show_ma2 ? ma2 : na, "MA 2", color=c_ma2)
+
+// --- Signals ---
+buySig = ta.crossover(ma1, ma2)
+sellSig = ta.crossunder(ma1, ma2)
+
+plotshape(show_sig and buySig, title="Buy", style=shape.labelup, location=location.belowbar, color=c_buy, text="BUY", textcolor=color.white, size=size.small)
+plotshape(show_sig and sellSig, title="Sell", style=shape.labeldown, location=location.abovebar, color=c_sell, text="SELL", textcolor=color.white, size=size.small)
+
+// --- Top/Bottom (Fix: Check 'not na') ---
+ph = ta.pivothigh(high, 5, 5)
+pl = ta.pivotlow(low, 5, 5)
+// Create boolean versions for conditions
+ph_exists = not na(ph)
+pl_exists = not na(pl)
+
+plotshape(show_tb and ph_exists ? ph : na, style=shape.triangledown, location=location.abovebar, color=c_tb, offset=-5, size=size.tiny, title="Top")
+plotshape(show_tb and pl_exists ? pl : na, style=shape.triangleup, location=location.belowbar, color=c_tb, offset=-5, size=size.tiny, title="Bottom")
+
+// --- Channel ---
+linreg = ta.linreg(close, len_linreg, 0)
+dev = ta.stdev(close, len_linreg) * mult_ch
+upper_ch = linreg + dev
+lower_ch = linreg - dev
+plot(show_ch ? upper_ch : na, "High Channel", color=c_ch)
+plot(show_ch ? lower_ch : na, "Low Channel", color=c_ch)
+
+// -------------------------------------------------------------------------
+// 3. ORDER BLOCK & ZONES
+// -------------------------------------------------------------------------
+
+// Order Blocks (Fix: Use boolean 'ph_exists' and 'pl_exists')
+if show_ob and ph_exists
+    if close[5] > open[5] 
+        box.new(bar_index[5], high[5], bar_index + 30, low[5], border_color=na, bgcolor=c_ob_bear_un, 
+             text="Bearish OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+
+if show_ob and pl_exists
+    if close[5] < open[5]
+        box.new(bar_index[5], high[5], bar_index + 30, low[5], border_color=na, bgcolor=c_ob_bull_un,
+             text="Bullish OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+
+// Supply / Demand
+isEngulfBear = close < open and close < low[1] and open > high[1]
+if show_sd and isEngulfBear
+    box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_sup, 
+         text="Supply Zone", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+
+isEngulfBull = close > open and close > high[1] and open < low[1]
+if show_sd and isEngulfBull
+    box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_dem, 
+         text="Demand Zone", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+
+// Market Structure (Fix: Move plotshape outside 'if', use 'valuewhen' with boolean)
+// Fix: valuewhen requires a boolean condition (ph_exists), not a float (ph)
+prev_high_val = ta.valuewhen(ph_exists, high[5], 0)
+prev_low_val = ta.valuewhen(pl_exists, low[5], 0)
+
+isBosUp = ta.crossover(close, prev_high_val)
+isBosDn = ta.crossunder(close, prev_low_val)
+
+// Plotshape must be in global scope
+plotshape(show_ms and isBosUp, "BOS Up", shape.circle, location.abovebar, color.green, size=size.tiny)
+plotshape(show_ms and isBosDn, "BOS Down", shape.circle, location.belowbar, color.red, size=size.tiny)
+
+// -------------------------------------------------------------------------
+// 4. TP/SL
+// -------------------------------------------------------------------------
+atr = ta.atr(atr_len)
+var float entry_p = na
+var float sl_p = na
+var float tp1_p = na
+var float tp2_p = na
+var float tp3_p = na
+var string direction = "Wait"
+
+if buySig
+    direction := "Long"
+    entry_p := close
+    sl_p := entry_p - (atr * fac_sl)
+    tp1_p := entry_p + (atr * fac_tp1)
+    tp2_p := entry_p + (atr * fac_tp2)
+    tp3_p := entry_p + (atr * fac_tp3)
+
+if sellSig
+    direction := "Short"
+    entry_p := close
+    sl_p := entry_p + (atr * fac_sl)
+    tp1_p := entry_p - (atr * fac_tp1)
+    tp2_p := entry_p - (atr * fac_tp2)
+    tp3_p := entry_p - (atr * fac_tp3)
+
+var line l_ent = na
+var line l_sl = na
+var line l_tp1 = na
+var line l_tp2 = na
+var line l_tp3 = na
+var label lb_info = na
+
+if (buySig or sellSig) and show_curr
+    line.delete(l_ent), line.delete(l_sl), line.delete(l_tp1), line.delete(l_tp2), line.delete(l_tp3)
+    label.delete(lb_info)
+    
+    int end_x = bar_index + 10
+    l_ent := line.new(bar_index, entry_p, end_x, entry_p, color=c_ent_line, style=line.style_solid)
+    l_sl := line.new(bar_index, sl_p, end_x, sl_p, color=c_sl_line, style=line.style_solid)
+    l_tp1 := line.new(bar_index, tp1_p, end_x, tp1_p, color=c_tp_line, style=line.style_dashed)
+    l_tp2 := line.new(bar_index, tp2_p, end_x, tp2_p, color=c_tp_line, style=line.style_dashed)
+    l_tp3 := line.new(bar_index, tp3_p, end_x, tp3_p, color=c_tp_line, style=line.style_dashed)
+
+if not (buySig or sellSig) and show_curr and not na(l_ent)
+    line.set_x2(l_ent, bar_index + 5)
+    line.set_x2(l_sl, bar_index + 5)
+    line.set_x2(l_tp1, bar_index + 5)
+    line.set_x2(l_tp2, bar_index + 5)
+    line.set_x2(l_tp3, bar_index + 5)
+
+// -------------------------------------------------------------------------
+// 5. DASHBOARD
+// -------------------------------------------------------------------------
+tbl_pos = tbl_pos_in == "Top Left" ? position.top_left : tbl_pos_in == "Bottom Right" ? position.bottom_right : tbl_pos_in == "Bottom Left" ? position.bottom_left : tbl_pos_in == "Middle Right" ? position.middle_right : position.top_right
+tbl_sz = tbl_size_in == "Tiny" ? size.tiny : tbl_size_in == "Normal" ? size.normal : tbl_size_in == "Large" ? size.large : size.small
+
+var tbl = table.new(tbl_pos, 2, 8, border_width=1, frame_color=color.gray, border_color=color.gray, bgcolor=color.new(color.black, 20))
+
+if barstate.islast
+    headerBg = direction == "Long" ? c_buy : (direction == "Short" ? c_sell : color.gray)
+    table.cell(tbl, 0, 0, direction, text_color=color.white, bgcolor=headerBg, text_size=tbl_sz)
+    table.cell(tbl, 1, 0, "Price", text_color=color.white, bgcolor=headerBg, text_size=tbl_sz)
+    
+    table.cell(tbl, 0, 1, "Entry", text_color=color.white, text_size=tbl_sz)
+    table.cell(tbl, 1, 1, str.tostring(entry_p, format.mintick), text_color=color.white, text_size=tbl_sz)
+    
+    table.cell(tbl, 0, 2, "TP 1", text_color=c_tp_line, text_size=tbl_sz)
+    table.cell(tbl, 1, 2, str.tostring(tp1_p, format.mintick), text_color=c_tp_line, text_size=tbl_sz)
+    
+    table.cell(tbl, 0, 3, "TP 2", text_color=c_tp_line, text_size=tbl_sz)
+    table.cell(tbl, 1, 3, str.tostring(tp2_p, format.mintick), text_color=c_tp_line, text_size=tbl_sz)
+    
+    table.cell(tbl, 0, 4, "TP 3", text_color=c_tp_line, text_size=tbl_sz)
+    table.cell(tbl, 1, 4, str.tostring(tp3_p, format.mintick), text_color=c_tp_line, text_size=tbl_sz)
+
+    table.cell(tbl, 0, 5, "SL", text_color=c_sl_line, text_size=tbl_sz)
+    table.cell(tbl, 1, 5, str.tostring(sl_p, format.mintick), text_color=c_sl_line, text_size=tbl_sz)
+
+// -------------------------------------------------------------------------
+// 6. ALERTS (Fix: Use 'not na' for bool conditions)
+// -------------------------------------------------------------------------
+alertcondition(buySig, title="Only Buy Signal", message="Buy Signal Detected")
+alertcondition(sellSig, title="Only Sell Signal", message="Sell Signal Detected")
+// ph and pl are floats (prices), must check if they exist (not na)
+alertcondition(ph_exists, title="Only Top Signal", message="Top Structure Formed")
+alertcondition(pl_exists, title="Only Bottom Signal", message="Bottom Structure Formed")
+alertcondition(ph_exists or pl_exists, title="Market Structure Alert", message="Market Structure Pivot Detected")
+alertcondition(ta.crossover(ma1, ma2), title="Trend Change: Uptrend", message="Trend Changed to Uptrend")
+alertcondition(ta.crossunder(ma1, ma2), title="Trend Change: Downtrend", message="Trend Changed to Downtrend")
