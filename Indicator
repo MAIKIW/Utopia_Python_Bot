@@ -1,6 +1,6 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // @version=5
-indicator("UTOPIA_Entry_Zone", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+indicator("UTOPIA_Entry_Zone (Status Update)", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
 
 // -------------------------------------------------------------------------
 // 1. SETTINGS INPUTS
@@ -84,10 +84,9 @@ sellSig = ta.crossunder(ma1, ma2)
 plotshape(show_sig and buySig, title="Buy", style=shape.labelup, location=location.belowbar, color=c_buy, text="BUY", textcolor=color.white, size=size.small)
 plotshape(show_sig and sellSig, title="Sell", style=shape.labeldown, location=location.abovebar, color=c_sell, text="SELL", textcolor=color.white, size=size.small)
 
-// --- Top/Bottom (Fix: Check 'not na') ---
+// --- Top/Bottom ---
 ph = ta.pivothigh(high, 5, 5)
 pl = ta.pivotlow(low, 5, 5)
-// Create boolean versions for conditions
 ph_exists = not na(ph)
 pl_exists = not na(pl)
 
@@ -106,7 +105,7 @@ plot(show_ch ? lower_ch : na, "Low Channel", color=c_ch)
 // 3. ORDER BLOCK & ZONES
 // -------------------------------------------------------------------------
 
-// Order Blocks (Fix: Use boolean 'ph_exists' and 'pl_exists')
+// Order Blocks
 if show_ob and ph_exists
     if close[5] > open[5] 
         box.new(bar_index[5], high[5], bar_index + 30, low[5], border_color=na, bgcolor=c_ob_bear_un, 
@@ -117,31 +116,36 @@ if show_ob and pl_exists
         box.new(bar_index[5], high[5], bar_index + 30, low[5], border_color=na, bgcolor=c_ob_bull_un,
              text="Bullish OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
-// Supply / Demand
-isEngulfBear = close < open and close < low[1] and open > high[1]
-if show_sd and isEngulfBear
+// -------------------------------------------------------------------------
+// SUPPLY / DEMAND (FILTERED BY TREND)
+// -------------------------------------------------------------------------
+
+// Supply Zone (Bearish Engulfing) + ต้องเป็นขาลง (Trend Down)
+isEngulfBear = close < open and close < low[1] and open >= close[1]
+// เพิ่มเงื่อนไข 'and trendDown' เพื่อกรองเฉพาะสวนเทรนด์ขาลง
+if show_sd and isEngulfBear and trendDown
     box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_sup, 
          text="Supply Zone", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
-isEngulfBull = close > open and close > high[1] and open < low[1]
-if show_sd and isEngulfBull
+// Demand Zone (Bullish Engulfing) + ต้องเป็นขาขึ้น (Trend Up)
+isEngulfBull = close > open and close > high[1] and open <= close[1]
+// เพิ่มเงื่อนไข 'and trendUp' เพื่อกรองเฉพาะตามเทรนด์ขาขึ้น
+if show_sd and isEngulfBull and trendUp
     box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_dem, 
          text="Demand Zone", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
-// Market Structure (Fix: Move plotshape outside 'if', use 'valuewhen' with boolean)
-// Fix: valuewhen requires a boolean condition (ph_exists), not a float (ph)
+// Market Structure
 prev_high_val = ta.valuewhen(ph_exists, high[5], 0)
 prev_low_val = ta.valuewhen(pl_exists, low[5], 0)
 
 isBosUp = ta.crossover(close, prev_high_val)
 isBosDn = ta.crossunder(close, prev_low_val)
 
-// Plotshape must be in global scope
 plotshape(show_ms and isBosUp, "BOS Up", shape.circle, location.abovebar, color.green, size=size.tiny)
 plotshape(show_ms and isBosDn, "BOS Down", shape.circle, location.belowbar, color.red, size=size.tiny)
 
 // -------------------------------------------------------------------------
-// 4. TP/SL
+// 4. TP/SL & STATUS LOGIC
 // -------------------------------------------------------------------------
 atr = ta.atr(atr_len)
 var float entry_p = na
@@ -149,8 +153,28 @@ var float sl_p = na
 var float tp1_p = na
 var float tp2_p = na
 var float tp3_p = na
-var string direction = "Wait"
+var string direction = "Close" // เริ่มต้นเป็น Close
 
+// ตรวจสอบการปิดออเดอร์ (Hit TP3 หรือ SL) เพื่อรีเซ็ตเป็น Close
+if direction == "Long"
+    if high >= tp3_p or low <= sl_p
+        direction := "Close"
+        entry_p := na
+        tp1_p := na
+        tp2_p := na
+        tp3_p := na
+        sl_p := na
+
+if direction == "Short"
+    if low <= tp3_p or high >= sl_p
+        direction := "Close"
+        entry_p := na
+        tp1_p := na
+        tp2_p := na
+        tp3_p := na
+        sl_p := na
+
+// สัญญาณเข้าใหม่
 if buySig
     direction := "Long"
     entry_p := close
@@ -167,6 +191,7 @@ if sellSig
     tp2_p := entry_p - (atr * fac_tp2)
     tp3_p := entry_p - (atr * fac_tp3)
 
+// Drawing Lines
 var line l_ent = na
 var line l_sl = na
 var line l_tp1 = na
@@ -185,7 +210,7 @@ if (buySig or sellSig) and show_curr
     l_tp2 := line.new(bar_index, tp2_p, end_x, tp2_p, color=c_tp_line, style=line.style_dashed)
     l_tp3 := line.new(bar_index, tp3_p, end_x, tp3_p, color=c_tp_line, style=line.style_dashed)
 
-if not (buySig or sellSig) and show_curr and not na(l_ent)
+if not (buySig or sellSig) and show_curr and not na(l_ent) and direction != "Close"
     line.set_x2(l_ent, bar_index + 5)
     line.set_x2(l_sl, bar_index + 5)
     line.set_x2(l_tp1, bar_index + 5)
@@ -201,31 +226,44 @@ tbl_sz = tbl_size_in == "Tiny" ? size.tiny : tbl_size_in == "Normal" ? size.norm
 var tbl = table.new(tbl_pos, 2, 8, border_width=1, frame_color=color.gray, border_color=color.gray, bgcolor=color.new(color.black, 20))
 
 if barstate.islast
+    // Header Status
     headerBg = direction == "Long" ? c_buy : (direction == "Short" ? c_sell : color.gray)
     table.cell(tbl, 0, 0, direction, text_color=color.white, bgcolor=headerBg, text_size=tbl_sz)
     table.cell(tbl, 1, 0, "Price", text_color=color.white, bgcolor=headerBg, text_size=tbl_sz)
     
+    // Helper function to display "-" if value is na
+    string t_ent = na(entry_p) ? "-" : str.tostring(entry_p, format.mintick)
+    string t_tp1 = na(tp1_p) ? "-" : str.tostring(tp1_p, format.mintick)
+    string t_tp2 = na(tp2_p) ? "-" : str.tostring(tp2_p, format.mintick)
+    string t_tp3 = na(tp3_p) ? "-" : str.tostring(tp3_p, format.mintick)
+    string t_sl  = na(sl_p) ? "-" : str.tostring(sl_p, format.mintick)
+    
     table.cell(tbl, 0, 1, "Entry", text_color=color.white, text_size=tbl_sz)
-    table.cell(tbl, 1, 1, str.tostring(entry_p, format.mintick), text_color=color.white, text_size=tbl_sz)
+    table.cell(tbl, 1, 1, t_ent, text_color=color.white, text_size=tbl_sz)
     
     table.cell(tbl, 0, 2, "TP 1", text_color=c_tp_line, text_size=tbl_sz)
-    table.cell(tbl, 1, 2, str.tostring(tp1_p, format.mintick), text_color=c_tp_line, text_size=tbl_sz)
+    table.cell(tbl, 1, 2, t_tp1, text_color=c_tp_line, text_size=tbl_sz)
     
     table.cell(tbl, 0, 3, "TP 2", text_color=c_tp_line, text_size=tbl_sz)
-    table.cell(tbl, 1, 3, str.tostring(tp2_p, format.mintick), text_color=c_tp_line, text_size=tbl_sz)
+    table.cell(tbl, 1, 3, t_tp2, text_color=c_tp_line, text_size=tbl_sz)
     
     table.cell(tbl, 0, 4, "TP 3", text_color=c_tp_line, text_size=tbl_sz)
-    table.cell(tbl, 1, 4, str.tostring(tp3_p, format.mintick), text_color=c_tp_line, text_size=tbl_sz)
+    table.cell(tbl, 1, 4, t_tp3, text_color=c_tp_line, text_size=tbl_sz)
 
     table.cell(tbl, 0, 5, "SL", text_color=c_sl_line, text_size=tbl_sz)
-    table.cell(tbl, 1, 5, str.tostring(sl_p, format.mintick), text_color=c_sl_line, text_size=tbl_sz)
+    table.cell(tbl, 1, 5, t_sl, text_color=c_sl_line, text_size=tbl_sz)
+
+    // Trend Status Row (New!)
+    statusTxt = trendUp ? "UPTREND" : "DOWNTREND"
+    statusCol = trendUp ? color.green : color.red
+    table.cell(tbl, 0, 6, "Trend", text_color=color.white, text_size=tbl_sz)
+    table.cell(tbl, 1, 6, statusTxt, text_color=statusCol, text_size=tbl_sz)
 
 // -------------------------------------------------------------------------
-// 6. ALERTS (Fix: Use 'not na' for bool conditions)
+// 6. ALERTS
 // -------------------------------------------------------------------------
 alertcondition(buySig, title="Only Buy Signal", message="Buy Signal Detected")
 alertcondition(sellSig, title="Only Sell Signal", message="Sell Signal Detected")
-// ph and pl are floats (prices), must check if they exist (not na)
 alertcondition(ph_exists, title="Only Top Signal", message="Top Structure Formed")
 alertcondition(pl_exists, title="Only Bottom Signal", message="Bottom Structure Formed")
 alertcondition(ph_exists or pl_exists, title="Market Structure Alert", message="Market Structure Pivot Detected")
