@@ -1,6 +1,6 @@
 // This source code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // @version=5
-indicator("UTOPIA_Entry_Zone (Status Update)", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+indicator("UTOPIA_Entry_Zone (Final Fix)", overlay=true, max_lines_count=500, max_boxes_count=500, max_labels_count=500)
 
 // -------------------------------------------------------------------------
 // 1. SETTINGS INPUTS
@@ -19,12 +19,22 @@ show_tb      = input.bool(true, "Show Top-Bottom [Signal]", group=grp_show)
 
 grp_ord = "Order History Function"
 show_curr    = input.bool(true, "Show Current Order [Line/Label]", group=grp_ord)
-show_lbl     = input.bool(true, "Show Label Price (Entry,TP,SL)", group=grp_ord)
-show_hist    = input.bool(false, "Show History Order [Line]", group=grp_ord)
+show_stat    = input.bool(true, "Show Statistics Table", group=grp_ord)
+stat_mode    = input.string("All History", "Backtest Mode", options=["All History", "Today Only"], group=grp_ord)
 
 grp_tbl = "Table Settings"
 tbl_pos_in   = input.string("Top Right", "Panel Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left", "Middle Right"], group=grp_tbl)
 tbl_size_in  = input.string("Small", "Text Size", options=["Tiny", "Small", "Normal", "Large"], group=grp_tbl)
+
+// Table Color Settings
+grp_style = "Table Color & Style"
+c_tbl_bg     = input.color(color.new(color.black, 20), "Dashboard Background", group=grp_style)
+c_tbl_border = input.color(color.gray, "Dashboard Border", group=grp_style)
+c_tbl_text   = input.color(color.white, "Dashboard Text", group=grp_style)
+
+c_stat_head  = input.color(color.new(#4a148c, 0), "Stats Header Color", group=grp_style)
+c_stat_bg    = input.color(color.new(#1a1a2e, 10), "Stats Body Color", group=grp_style)
+c_stat_text  = input.color(color.white, "Stats Text Color", group=grp_style)
 
 grp_smc = "Demand/Supply & OrderBlock Settings"
 c_ob_bear_un = input.color(color.new(color.red, 60), "Bearish OB Color", group=grp_smc)
@@ -108,67 +118,155 @@ plot(show_ch ? lower_ch : na, "Low Channel", color=c_ch)
 // Order Blocks
 if show_ob and ph_exists
     if close[5] > open[5] 
-        box.new(bar_index[5], high[5], bar_index + 30, low[5], border_color=na, bgcolor=c_ob_bear_un, 
-             text="Bearish OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+        box.new(bar_index[5], high[5], bar_index + 30, low[5], border_color=na, bgcolor=c_ob_bear_un, text="Bearish OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
 if show_ob and pl_exists
     if close[5] < open[5]
-        box.new(bar_index[5], high[5], bar_index + 30, low[5], border_color=na, bgcolor=c_ob_bull_un,
-             text="Bullish OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+        box.new(bar_index[5], high[5], bar_index + 30, low[5], border_color=na, bgcolor=c_ob_bull_un, text="Bullish OB", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
-// // -------------------------------------------------------------------------
-// SUPPLY / DEMAND (HIGH QUALITY FILTER)
-// -------------------------------------------------------------------------
-
-// คำนวณขนาดตัวแท่งเทียน (Body Size)
+// Supply / Demand (High Quality Filter)
 bodySize = math.abs(close - open)
 prevBody = math.abs(close[1] - open[1])
-atrVal   = ta.atr(14) // ความผันผวนเฉลี่ย 14 แท่ง
-
-// 🔥 กฎเหล็กความแรง (Strong Momentum Rules)
-// 1. แท่งปัจจุบันต้องใหญ่กว่าแท่งก่อนหน้า 1.2 เท่า (แสดงแรงชนะขาด)
+atrVal   = ta.atr(14)
 isStrongMove = bodySize > (prevBody * 1.2)
-// 2. แท่งปัจจุบันต้องมีขนาดไม่เล็กเกินไป (ต้องมากกว่า 50% ของค่าเฉลี่ย ATR)
 isSignificant = bodySize > (atrVal * 0.5)
 
-// --- Supply Zone (Strong Bearish Engulfing) ---
 isEngulfBear = close < open and close < low[1] and open >= close[1]
-
-// เงื่อนไขรวม: กลืนกิน + ตามเทรนด์ขาลง + แรงขายชนะขาด + แท่งใหญ่พอ
 if show_sd and isEngulfBear and trendDown and isStrongMove and isSignificant
-    box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_sup, 
-         text="Strong Supply", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+    box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_sup, text="Strong Supply", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
-// --- Demand Zone (Strong Bullish Engulfing) ---
 isEngulfBull = close > open and close > high[1] and open <= close[1]
-
-// เงื่อนไขรวม: กลืนกิน + ตามเทรนด์ขาขึ้น + แรงซื้อชนะขาด + แท่งใหญ่พอ
 if show_sd and isEngulfBull and trendUp and isStrongMove and isSignificant
-    box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_dem, 
-         text="Strong Demand", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
+    box.new(bar_index[1], high[1], bar_index + 25, low[1], border_color=na, bgcolor=c_dem, text="Strong Demand", text_color=color.white, text_size=size.tiny, text_halign=text.align_center, text_valign=text.align_center)
 
 // Market Structure
 prev_high_val = ta.valuewhen(ph_exists, high[5], 0)
 prev_low_val = ta.valuewhen(pl_exists, low[5], 0)
-
 isBosUp = ta.crossover(close, prev_high_val)
 isBosDn = ta.crossunder(close, prev_low_val)
-
 plotshape(show_ms and isBosUp, "BOS Up", shape.circle, location.abovebar, color.green, size=size.tiny)
 plotshape(show_ms and isBosDn, "BOS Down", shape.circle, location.belowbar, color.red, size=size.tiny)
 
 // -------------------------------------------------------------------------
-// 4. TP/SL & STATUS LOGIC
+// 4. BACKTEST SIMULATION LOGIC
 // -------------------------------------------------------------------------
+
+var int stat_total = 0
+var int stat_win = 0
+var int stat_lose = 0
+var float stat_point_net = 0.0
+
+var int stat_hit_tp1 = 0
+var int stat_hit_tp2 = 0
+var int stat_hit_tp3 = 0
+
+var int bt_state = 0
+var float bt_entry = 0.0
+var float bt_sl = 0.0
+var float bt_tp1 = 0.0
+var float bt_tp2 = 0.0
+var float bt_tp3 = 0.0
+
+var bool cur_hit_tp1 = false
+var bool cur_hit_tp2 = false
+
+// Daily Reset Logic
+isNewDay = ta.change(time("D"))
+if stat_mode == "Today Only" and isNewDay
+    stat_total := 0
+    stat_win := 0
+    stat_lose := 0
+    stat_point_net := 0.0
+    stat_hit_tp1 := 0
+    stat_hit_tp2 := 0
+    stat_hit_tp3 := 0
+
+atr_bt = ta.atr(atr_len)
+
+// Exit Logic
+if bt_state == 1
+    if high >= bt_tp1 and not cur_hit_tp1
+        cur_hit_tp1 := true
+    if high >= bt_tp2 and not cur_hit_tp2
+        cur_hit_tp2 := true
+        
+    if high >= bt_tp3
+        stat_win += 1
+        stat_total += 1
+        stat_hit_tp3 += 1
+        stat_hit_tp2 += 1
+        stat_hit_tp1 += 1
+        stat_point_net += (bt_tp3 - bt_entry)
+        bt_state := 0
+    else if low <= bt_sl
+        stat_lose += 1
+        stat_total += 1
+        stat_point_net -= (bt_entry - bt_sl)
+        if cur_hit_tp1
+            stat_hit_tp1 += 1
+        if cur_hit_tp2
+            stat_hit_tp2 += 1
+        bt_state := 0
+
+if bt_state == -1
+    if low <= bt_tp1 and not cur_hit_tp1
+        cur_hit_tp1 := true
+    if low <= bt_tp2 and not cur_hit_tp2
+        cur_hit_tp2 := true
+        
+    if low <= bt_tp3
+        stat_win += 1
+        stat_total += 1
+        stat_hit_tp3 += 1
+        stat_hit_tp2 += 1
+        stat_hit_tp1 += 1
+        stat_point_net += (bt_entry - bt_tp3)
+        bt_state := 0
+    else if high >= bt_sl
+        stat_lose += 1
+        stat_total += 1
+        stat_point_net -= (bt_sl - bt_entry)
+        if cur_hit_tp1
+            stat_hit_tp1 += 1
+        if cur_hit_tp2
+            stat_hit_tp2 += 1
+        bt_state := 0
+
+// Entry Logic
+if buySig and bt_state == 0
+    bt_state := 1
+    bt_entry := close
+    bt_tp1 := close + (atr_bt * fac_tp1)
+    bt_tp2 := close + (atr_bt * fac_tp2)
+    bt_tp3 := close + (atr_bt * fac_tp3)
+    bt_sl := close - (atr_bt * fac_sl)
+    cur_hit_tp1 := false
+    cur_hit_tp2 := false
+
+if sellSig and bt_state == 0
+    bt_state := -1
+    bt_entry := close
+    bt_tp1 := close - (atr_bt * fac_tp1)
+    bt_tp2 := close - (atr_bt * fac_tp2)
+    bt_tp3 := close - (atr_bt * fac_tp3)
+    bt_sl := close + (atr_bt * fac_sl)
+    cur_hit_tp1 := false
+    cur_hit_tp2 := false
+
+
+// -------------------------------------------------------------------------
+// 5. REAL-TIME TP/SL & DASHBOARD LOGIC
+// -------------------------------------------------------------------------
+
 atr = ta.atr(atr_len)
+
 var float entry_p = na
 var float sl_p = na
 var float tp1_p = na
 var float tp2_p = na
 var float tp3_p = na
-var string direction = "Close" // เริ่มต้นเป็น Close
+var string direction = "Close"
 
-// ตรวจสอบการปิดออเดอร์ (Hit TP3 หรือ SL) เพื่อรีเซ็ตเป็น Close
 if direction == "Long"
     if high >= tp3_p or low <= sl_p
         direction := "Close"
@@ -187,7 +285,6 @@ if direction == "Short"
         tp3_p := na
         sl_p := na
 
-// สัญญาณเข้าใหม่
 if buySig
     direction := "Long"
     entry_p := close
@@ -204,18 +301,18 @@ if sellSig
     tp2_p := entry_p - (atr * fac_tp2)
     tp3_p := entry_p - (atr * fac_tp3)
 
-// Drawing Lines
 var line l_ent = na
 var line l_sl = na
 var line l_tp1 = na
 var line l_tp2 = na
 var line l_tp3 = na
-var label lb_info = na
 
 if (buySig or sellSig) and show_curr
-    line.delete(l_ent), line.delete(l_sl), line.delete(l_tp1), line.delete(l_tp2), line.delete(l_tp3)
-    label.delete(lb_info)
-    
+    line.delete(l_ent)
+    line.delete(l_sl)
+    line.delete(l_tp1)
+    line.delete(l_tp2)
+    line.delete(l_tp3)
     int end_x = bar_index + 10
     l_ent := line.new(bar_index, entry_p, end_x, entry_p, color=c_ent_line, style=line.style_solid)
     l_sl := line.new(bar_index, sl_p, end_x, sl_p, color=c_sl_line, style=line.style_solid)
@@ -231,49 +328,74 @@ if not (buySig or sellSig) and show_curr and not na(l_ent) and direction != "Clo
     line.set_x2(l_tp3, bar_index + 5)
 
 // -------------------------------------------------------------------------
-// 5. DASHBOARD
+// 6. DASHBOARD & STATS TABLE
 // -------------------------------------------------------------------------
 tbl_pos = tbl_pos_in == "Top Left" ? position.top_left : tbl_pos_in == "Bottom Right" ? position.bottom_right : tbl_pos_in == "Bottom Left" ? position.bottom_left : tbl_pos_in == "Middle Right" ? position.middle_right : position.top_right
 tbl_sz = tbl_size_in == "Tiny" ? size.tiny : tbl_size_in == "Normal" ? size.normal : tbl_size_in == "Large" ? size.large : size.small
 
-var tbl = table.new(tbl_pos, 2, 8, border_width=1, frame_color=color.gray, border_color=color.gray, bgcolor=color.new(color.black, 20))
+// --- Table 1: Current Status ---
+var tbl = table.new(tbl_pos, 2, 7, border_width=1, frame_color=c_tbl_border, border_color=c_tbl_border, bgcolor=c_tbl_bg)
 
 if barstate.islast
-    // Header Status
     headerBg = direction == "Long" ? c_buy : (direction == "Short" ? c_sell : color.gray)
     table.cell(tbl, 0, 0, direction, text_color=color.white, bgcolor=headerBg, text_size=tbl_sz)
     table.cell(tbl, 1, 0, "Price", text_color=color.white, bgcolor=headerBg, text_size=tbl_sz)
     
-    // Helper function to display "-" if value is na
     string t_ent = na(entry_p) ? "-" : str.tostring(entry_p, format.mintick)
     string t_tp1 = na(tp1_p) ? "-" : str.tostring(tp1_p, format.mintick)
     string t_tp2 = na(tp2_p) ? "-" : str.tostring(tp2_p, format.mintick)
     string t_tp3 = na(tp3_p) ? "-" : str.tostring(tp3_p, format.mintick)
     string t_sl  = na(sl_p) ? "-" : str.tostring(sl_p, format.mintick)
     
-    table.cell(tbl, 0, 1, "Entry", text_color=color.white, text_size=tbl_sz)
-    table.cell(tbl, 1, 1, t_ent, text_color=color.white, text_size=tbl_sz)
-    
+    table.cell(tbl, 0, 1, "Entry", text_color=c_tbl_text, text_size=tbl_sz)
+    table.cell(tbl, 1, 1, t_ent, text_color=c_tbl_text, text_size=tbl_sz)
     table.cell(tbl, 0, 2, "TP 1", text_color=c_tp_line, text_size=tbl_sz)
     table.cell(tbl, 1, 2, t_tp1, text_color=c_tp_line, text_size=tbl_sz)
-    
     table.cell(tbl, 0, 3, "TP 2", text_color=c_tp_line, text_size=tbl_sz)
     table.cell(tbl, 1, 3, t_tp2, text_color=c_tp_line, text_size=tbl_sz)
-    
     table.cell(tbl, 0, 4, "TP 3", text_color=c_tp_line, text_size=tbl_sz)
     table.cell(tbl, 1, 4, t_tp3, text_color=c_tp_line, text_size=tbl_sz)
-
     table.cell(tbl, 0, 5, "SL", text_color=c_sl_line, text_size=tbl_sz)
     table.cell(tbl, 1, 5, t_sl, text_color=c_sl_line, text_size=tbl_sz)
-
-    // Trend Status Row (New!)
+    
     statusTxt = trendUp ? "UPTREND" : "DOWNTREND"
     statusCol = trendUp ? color.green : color.red
-    table.cell(tbl, 0, 6, "Trend", text_color=color.white, text_size=tbl_sz)
+    table.cell(tbl, 0, 6, "Trend", text_color=c_tbl_text, text_size=tbl_sz)
     table.cell(tbl, 1, 6, statusTxt, text_color=statusCol, text_size=tbl_sz)
 
+// --- Table 2: Statistics ---
+var tbl_stat = table.new(position.bottom_right, 2, 8, border_width=1, frame_color=c_stat_head, border_color=color.white, bgcolor=c_stat_bg)
+
+if barstate.islast and show_stat
+    string head_txt = stat_mode == "Today Only" ? "STATS (TODAY)" : "STATS (ALL)"
+    
+    table.cell(tbl_stat, 0, 0, "SUMMARY", text_color=c_stat_text, bgcolor=c_stat_head, text_size=size.small)
+    table.cell(tbl_stat, 1, 0, head_txt, text_color=c_stat_text, bgcolor=c_stat_head, text_size=size.small)
+    
+    table.cell(tbl_stat, 0, 1, "TOTAL TRADE", text_color=c_stat_text, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl_stat, 1, 1, str.tostring(stat_total), text_color=c_stat_text, text_size=size.small)
+    
+    table.cell(tbl_stat, 0, 2, "Hit TP1", text_color=color.new(color.green, 30), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl_stat, 1, 2, str.tostring(stat_hit_tp1), text_color=color.new(color.green, 30), text_size=size.small)
+
+    table.cell(tbl_stat, 0, 3, "Hit TP2", text_color=color.new(color.green, 10), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl_stat, 1, 3, str.tostring(stat_hit_tp2), text_color=color.new(color.green, 10), text_size=size.small)
+
+    table.cell(tbl_stat, 0, 4, "Hit TP3 (Full)", text_color=color.green, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl_stat, 1, 4, str.tostring(stat_hit_tp3), text_color=color.green, text_size=size.small)
+    
+    table.cell(tbl_stat, 0, 5, "LOSE (Full SL)", text_color=color.red, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl_stat, 1, 5, str.tostring(stat_lose), text_color=color.red, text_size=size.small)
+    
+    float wr = stat_total > 0 ? (stat_hit_tp3 / stat_total) * 100 : 0.0
+    table.cell(tbl_stat, 0, 6, "WINRATE (TP3)", text_color=color.yellow, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl_stat, 1, 6, str.tostring(wr, "#.##") + "%", text_color=color.yellow, text_size=size.small)
+    
+    table.cell(tbl_stat, 0, 7, "TOTAL POINTS", text_color=stat_point_net >= 0 ? color.green : color.red, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl_stat, 1, 7, str.tostring(stat_point_net, "#.##"), text_color=stat_point_net >= 0 ? color.green : color.red, text_size=size.small)
+
 // -------------------------------------------------------------------------
-// 6. ALERTS
+// 7. ALERTS
 // -------------------------------------------------------------------------
 alertcondition(buySig, title="Only Buy Signal", message="Buy Signal Detected")
 alertcondition(sellSig, title="Only Sell Signal", message="Sell Signal Detected")
